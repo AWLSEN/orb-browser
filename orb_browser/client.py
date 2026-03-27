@@ -248,7 +248,7 @@ class OrbBrowser:
     # -- Internal --
 
     def _orb(self, method: str, path: str, body: dict | None = None) -> dict:
-        data = json.dumps(body).encode() if body else None
+        data = json.dumps(body).encode() if body is not None else None
         req = urllib.request.Request(
             f"{self.api_url}{path}",
             data=data,
