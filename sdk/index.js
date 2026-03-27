@@ -10,8 +10,34 @@
  *   await browser.wake();    // ~500ms, everything restored
  */
 
-const fs = require("fs");
-const path = require("path");
+// Embedded orb.toml config — no file dependency
+const ORB_TOML = `[agent]
+name = "orb-browser"
+lang = "node"
+entry = "server.js"
+
+[source]
+git = "https://github.com/nextbysam/orb-browser.git"
+branch = "main"
+
+[build]
+steps = [
+  "apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y libnss3 libatk-bridge2.0-0t64 libcups2t64 libdrm2 libgbm1 libpango-1.0-0 libcairo2 libasound2t64 libxshmfence1 libxcomposite1 libxrandr2 libxdamage1 libxfixes3 libxext6 libx11-xcb1 libxcb1 libxkbcommon0 libdbus-1-3",
+  "cd /agent/code && npm install",
+  "PLAYWRIGHT_BROWSERS_PATH=/opt/browsers npx playwright install chromium"
+]
+working_dir = "/agent/code"
+
+[agent.env]
+PLAYWRIGHT_BROWSERS_PATH = "/opt/browsers"
+PORT = "3000"
+
+[backend]
+provider = "custom"
+
+[ports]
+expose = [3000]
+`;
 
 class OrbBrowser {
   constructor({ apiKey, orbApiUrl = "https://api.orbcloud.dev" }) {
@@ -40,11 +66,10 @@ class OrbBrowser {
 
     try {
       // 2. Upload config
-      const toml = fs.readFileSync(path.join(__dirname, "..", "orb.toml"), "utf8");
       await fetch(`${this.orbApiUrl}/v1/computers/${this.computerId}/config`, {
         method: "POST",
         headers: { Authorization: `Bearer ${this.apiKey}`, "Content-Type": "application/toml" },
-        body: toml,
+        body: ORB_TOML,
       });
 
       // 3. Build
@@ -183,3 +208,4 @@ class OrbBrowser {
 }
 
 module.exports = { OrbBrowser };
+module.exports.default = OrbBrowser;
