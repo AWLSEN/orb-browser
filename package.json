@@ -1,0 +1,14 @@
+{
+  "name": "orb-browser",
+  "version": "0.1.0",
+  "description": "Browser sessions that sleep for $0 and wake in 500ms on Orb Cloud",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "test": "./test/e2e.sh"
+  },
+  "dependencies": {
+    "playwright": "^1.50.0"
+  },
+  "license": "MIT"
+}
