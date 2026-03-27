@@ -95,24 +95,31 @@ const server = http.createServer(async (req, res) => {
       }));
 
     } else if (url.pathname === "/cdp") {
-      // Return the CDP connection info for browser-use
+      // Return CDP connection info for browser-use
       if (!wsEndpoint) {
         res.statusCode = 503;
         res.end(JSON.stringify({ error: "browser not ready" }));
         return;
       }
-      // Return CDP URL that works externally
+      // Extract the browser ID from the local wsEndpoint
+      const browserId = wsEndpoint.split("/").pop();
       const host = req.headers.host || `localhost:${PORT}`;
+      const proto = req.headers["x-forwarded-proto"] === "https" ? "wss" : "ws";
       res.end(JSON.stringify({
-        wsEndpoint,
-        cdpUrl: `http://0.0.0.0:${CDP_PORT}`,
-        debuggerUrl: `http://${host.split(":")[0]}:${CDP_PORT}`,
+        wsEndpoint: `${proto}://${host}/devtools/browser/${browserId}`,
+        httpEndpoint: `${req.headers["x-forwarded-proto"] || "http"}://${host}`,
       }));
 
     } else if (url.pathname === "/json/version") {
-      // Proxy CDP /json/version for compatibility
+      // Proxy CDP /json/version, rewrite WebSocket URL to external
       const cdpRes = await fetch(`http://127.0.0.1:${CDP_PORT}/json/version`);
       const data = await cdpRes.json();
+      const host = req.headers.host || `localhost:${PORT}`;
+      const proto = req.headers["x-forwarded-proto"] === "https" ? "wss" : "ws";
+      if (data.webSocketDebuggerUrl) {
+        const browserId = data.webSocketDebuggerUrl.split("/").pop();
+        data.webSocketDebuggerUrl = `${proto}://${host}/devtools/browser/${browserId}`;
+      }
       res.end(JSON.stringify(data));
 
     } else if (url.pathname === "/json" || url.pathname === "/json/list") {
@@ -142,6 +149,36 @@ const server = http.createServer(async (req, res) => {
     res.statusCode = 500;
     res.end(JSON.stringify({ error: e.message }));
   }
+});
+
+// WebSocket proxy: forward CDP connections from :3000 to :9222
+const WebSocket = require("ws");
+const wss = new WebSocket.Server({ noServer: true });
+
+server.on("upgrade", (req, socket, head) => {
+  // Proxy any WebSocket upgrade to Chrome's CDP
+  const cdpPath = req.url || "/";
+  const target = `ws://127.0.0.1:${CDP_PORT}${cdpPath}`;
+
+  const cdpWs = new WebSocket(target);
+  cdpWs.on("open", () => {
+    wss.handleUpgrade(req, socket, head, (clientWs) => {
+      // Bidirectional proxy
+      clientWs.on("message", (data) => {
+        if (cdpWs.readyState === WebSocket.OPEN) cdpWs.send(data);
+      });
+      cdpWs.on("message", (data) => {
+        if (clientWs.readyState === WebSocket.OPEN) clientWs.send(data);
+      });
+      clientWs.on("close", () => cdpWs.close());
+      cdpWs.on("close", () => clientWs.close());
+      clientWs.on("error", () => cdpWs.close());
+      cdpWs.on("error", () => clientWs.close());
+    });
+  });
+  cdpWs.on("error", () => {
+    socket.destroy();
+  });
 });
 
 // Start server FIRST (so health check passes), then launch Chrome
