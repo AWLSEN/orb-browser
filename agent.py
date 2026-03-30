@@ -63,21 +63,10 @@ class CookieRequest(BaseModel):
 async def startup():
     global browser, context, page, init_error
     try:
-        # Start Xvfb in a new session (setsid) so it's not a child of this process
-        # CRIU checkpoints --tree {pid} and won't include processes in other sessions
-        import subprocess
-        subprocess.Popen(
-            ["Xvfb", ":99", "-screen", "0", "1280x800x24", "-ac"],
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-            start_new_session=True,
-        )
-        os.environ["DISPLAY"] = ":99"
-        import time as _t; _t.sleep(1)
-
         from playwright.async_api import async_playwright
         pw = await async_playwright().start()
         browser = await pw.chromium.launch(
-            headless=False,
+            headless=True,
             args=["--no-sandbox", "--disable-gpu", "--disable-dev-shm-usage"],
         )
         context = await browser.new_context(
