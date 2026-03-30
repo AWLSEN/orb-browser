@@ -37,10 +37,18 @@ async def startup():
     global browser, init_error
     try:
         from browser_use import Browser
+        # Find the Playwright Chromium binary
+        import glob
+        browsers_path = os.environ.get("PLAYWRIGHT_BROWSERS_PATH", "/home/awlsen/.cache/ms-playwright")
+        chrome_paths = glob.glob(f"{browsers_path}/chromium-*/chrome-linux*/chrome")
+        chrome_path = chrome_paths[0] if chrome_paths else None
+        print(f"Chrome path: {chrome_path}")
+
         browser = Browser(
             headless=True,
             disable_security=True,
             enable_default_extensions=False,
+            executable_path=chrome_path,
             args=["--no-sandbox", "--disable-gpu", "--disable-dev-shm-usage"],
         )
         await browser.start()
