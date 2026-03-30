@@ -49,6 +49,9 @@ PLAYWRIGHT_BROWSERS_PATH = "/opt/browsers"
 PORT = "8000"
 CDP_PORT = "9222"
 
+[lifecycle]
+idle_timeout = "3600s"
+
 [backend]
 provider = "custom"
 
