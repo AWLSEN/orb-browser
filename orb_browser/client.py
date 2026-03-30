@@ -27,8 +27,8 @@ import urllib.error
 
 ORB_TOML = """[agent]
 name = "orb-browser"
-lang = "binary"
-entry = "start.sh"
+lang = "python"
+entry = "agent.py"
 
 [source]
 git = "https://github.com/nextbysam/orb-browser.git"
@@ -39,7 +39,6 @@ steps = [
   "apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y xvfb",
   "pip install playwright browser-use fastapi uvicorn uv",
   "PLAYWRIGHT_BROWSERS_PATH=/opt/browsers playwright install chromium",
-  "chmod +x /agent/code/start.sh"
 ]
 working_dir = "/agent/code"
 
