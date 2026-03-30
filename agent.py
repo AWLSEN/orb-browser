@@ -63,13 +63,8 @@ class CookieRequest(BaseModel):
 async def startup():
     global browser, context, page, init_error
     try:
-        # Start Xvfb for headful mode (enables video playback)
-        import subprocess
-        subprocess.Popen(["Xvfb", ":99", "-screen", "0", "1280x800x24", "-ac"],
-                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        os.environ["DISPLAY"] = ":99"
-        import time; time.sleep(1)
-
+        # Xvfb runs outside agent process (started in build step)
+        # DISPLAY=:99 set via agent.env — Chrome connects via X11 socket
         from playwright.async_api import async_playwright
         pw = await async_playwright().start()
         browser = await pw.chromium.launch(
