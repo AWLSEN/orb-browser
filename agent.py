@@ -286,7 +286,7 @@ async function refresh() {
   }
 }
 
-setInterval(refresh, 1500);
+setInterval(refresh, 600);
 refresh();
 
 // Click
