@@ -1,24 +1,23 @@
 """
-OrbBrowser — deploy browser agents on Orb Cloud.
+OrbBrowser — deploy a browser on Orb Cloud.
 
-Usage:
     from orb_browser import OrbBrowser
 
     orb = OrbBrowser(api_key="orb_...")
-    cdp_url = orb.deploy()
+    orb.deploy()
 
-    # Use with browser-use
-    from browser_use import Browser
-    browser = Browser(cdp_url=cdp_url)
-    await browser.start()
+    # Control via HTTP
+    orb.navigate("https://example.com")
+    orb.screenshot("screenshot.jpg")
+
+    # Manual login via live view
+    print(orb.live_url)  # Open in your browser, log in manually
 
     # Sleep ($0 while frozen)
     orb.sleep()
 
-    # Wake (~500ms)
-    cdp_url = orb.wake()
-    browser = Browser(cdp_url=cdp_url)
-    await browser.start()
+    # Wake (~500ms, still logged in)
+    orb.wake()
 """
 
 import json
@@ -26,11 +25,10 @@ import time
 import urllib.request
 import urllib.error
 
-# The orb.toml config that runs on Orb Cloud
 ORB_TOML = """[agent]
 name = "orb-browser"
-lang = "node"
-entry = "server.js"
+lang = "python"
+entry = "agent.py"
 
 [source]
 git = "https://github.com/nextbysam/orb-browser.git"
@@ -38,16 +36,13 @@ branch = "main"
 
 [build]
 steps = [
-  "apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y libnss3 libatk-bridge2.0-0t64 libcups2t64 libdrm2 libgbm1 libpango-1.0-0 libcairo2 libasound2t64 libxshmfence1 libxcomposite1 libxrandr2 libxdamage1 libxfixes3 libxext6 libx11-xcb1 libxcb1 libxkbcommon0 libdbus-1-3",
-  "cd /agent/code && npm install",
-  "PLAYWRIGHT_BROWSERS_PATH=/opt/browsers npx playwright install chromium"
+  "pip install playwright browser-use fastapi uvicorn uv",
+  "PLAYWRIGHT_BROWSERS_PATH=/opt/browsers playwright install chromium"
 ]
 working_dir = "/agent/code"
 
 [agent.env]
 PLAYWRIGHT_BROWSERS_PATH = "/opt/browsers"
-PORT = "8000"
-CDP_PORT = "9222"
 
 [lifecycle]
 idle_timeout = "3600s"
@@ -56,12 +51,12 @@ idle_timeout = "3600s"
 provider = "custom"
 
 [ports]
-expose = [8000, 9222]
+expose = [8000]
 """
 
 
 class OrbBrowser:
-    """Deploy and manage a browser on Orb Cloud with sleep/wake support."""
+    """A browser on Orb Cloud. Deploy, control, sleep, wake."""
 
     def __init__(self, api_key: str, api_url: str = "https://api.orbcloud.dev"):
         self.api_key = api_key
@@ -69,50 +64,37 @@ class OrbBrowser:
         self.computer_id: str | None = None
         self.short_id: str | None = None
         self.agent_port: int | None = None
-        self.cdp_url: str | None = None
         self._state = "init"
 
-    def deploy(
-        self,
-        name: str | None = None,
-        runtime_mb: int = 2048,
-        disk_mb: int = 4096,
-        wait: bool = True,
-    ) -> str:
-        """
-        Deploy a browser on Orb Cloud. Returns the CDP WebSocket URL.
+    # ── Deploy ────────────────────────────────────────────
 
-        Takes 1-3 minutes on first deploy (installs Chrome).
-        """
+    def deploy(self, name: str | None = None, wait: bool = True) -> str:
+        """Deploy a browser on Orb Cloud. Returns the VM URL."""
         if name is None:
             name = f"orb-browser-{int(time.time())}"
 
         self._state = "deploying"
         print(f"[orb-browser] Creating VM...")
 
-        # 1. Create computer
         res = self._orb("POST", "/v1/computers", {
-            "name": name, "runtime_mb": runtime_mb, "disk_mb": disk_mb,
+            "name": name, "runtime_mb": 2048, "disk_mb": 4096,
         })
         self.computer_id = res["id"]
         self.short_id = self.computer_id[:8]
         print(f"[orb-browser] VM: {self.short_id}")
 
         try:
-            # 2. Upload config
+            # Upload config
             req = urllib.request.Request(
                 f"{self.api_url}/v1/computers/{self.computer_id}/config",
                 data=ORB_TOML.encode(),
-                headers={
-                    "Authorization": f"Bearer {self.api_key}",
-                    "Content-Type": "application/toml",
-                },
+                headers={"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/toml"},
                 method="POST",
             )
             urllib.request.urlopen(req)
 
-            # 3. Build
-            print(f"[orb-browser] Building (Chrome + Playwright)...")
+            # Build
+            print(f"[orb-browser] Building...")
             req = urllib.request.Request(
                 f"{self.api_url}/v1/computers/{self.computer_id}/build",
                 headers={"Authorization": f"Bearer {self.api_key}"},
@@ -120,109 +102,118 @@ class OrbBrowser:
             )
             build_res = json.loads(urllib.request.urlopen(req, timeout=900).read())
             if not build_res.get("success"):
-                failed = next(
-                    (s for s in build_res.get("steps", []) if s["exit_code"] != 0),
-                    None,
-                )
-                raise RuntimeError(f"Build failed: {failed}")
+                raise RuntimeError(f"Build failed")
             print(f"[orb-browser] Build OK")
 
-            # 4. Deploy agent
-            deploy_res = self._orb(
-                "POST", f"/v1/computers/{self.computer_id}/agents", {}
-            )
+            # Deploy agent
+            deploy_res = self._orb("POST", f"/v1/computers/{self.computer_id}/agents", {})
             self.agent_port = deploy_res["agents"][0]["port"]
 
-            # 5. Wait for health
+            # Wait for health
             if wait:
                 self._wait_for_health(timeout=60)
 
-            # 6. Set hostname so CDP URLs are correct
-            vm_url = f"https://{self.short_id}.orbcloud.dev"
-            urllib.request.urlopen(
-                f"{vm_url}/set-host?host={self.short_id}.orbcloud.dev"
-            )
-
-            # 7. Get CDP URL
-            cdp_data = json.loads(
-                urllib.request.urlopen(f"{vm_url}/cdp").read()
-            )
-            self.cdp_url = cdp_data["cdpUrl"]
             self._state = "running"
-
-            print(f"[orb-browser] Ready! CDP: {self.cdp_url}")
-            return self.cdp_url
+            print(f"[orb-browser] Ready at {self.vm_url}")
+            print(f"[orb-browser] Live view: {self.live_url}")
+            return self.vm_url
 
         except Exception:
             self.destroy()
             raise
 
-    def connect(self, computer_id: str, agent_port: int) -> str:
-        """Connect to an existing Orb Browser VM. Returns CDP URL."""
+    # ── Connect to existing ───────────────────────────────
+
+    def connect(self, computer_id: str, agent_port: int | None = None):
+        """Connect to an existing browser VM."""
         self.computer_id = computer_id
         self.short_id = computer_id[:8]
         self.agent_port = agent_port
         self._state = "running"
 
-        vm_url = f"https://{self.short_id}.orbcloud.dev"
-        urllib.request.urlopen(
-            f"{vm_url}/set-host?host={self.short_id}.orbcloud.dev"
-        )
-        cdp_data = json.loads(urllib.request.urlopen(f"{vm_url}/cdp").read())
-        self.cdp_url = cdp_data["cdpUrl"]
-        return self.cdp_url
+    # ── Browser Control ───────────────────────────────────
+
+    def navigate(self, url: str) -> dict:
+        """Navigate to a URL."""
+        return self._vm("POST", "/navigate", {"url": url})
+
+    def click(self, selector: str | None = None, x: int | None = None, y: int | None = None) -> dict:
+        """Click an element by selector or coordinates."""
+        return self._vm("POST", "/click", {"selector": selector, "x": x, "y": y})
+
+    def fill(self, selector: str, value: str) -> dict:
+        """Fill an input field."""
+        return self._vm("POST", "/fill", {"selector": selector, "value": value})
+
+    def type(self, text: str) -> dict:
+        """Type text."""
+        return self._vm("POST", "/type", {"text": text})
+
+    def press(self, key: str) -> dict:
+        """Press a key (Enter, Tab, Escape, etc)."""
+        return self._vm("POST", "/press", {"key": key})
+
+    def scroll(self, direction: str = "down", amount: int = 500) -> dict:
+        """Scroll the page."""
+        return self._vm("POST", "/scroll", {"direction": direction, "amount": amount})
+
+    def evaluate(self, expression: str) -> dict:
+        """Execute JavaScript."""
+        return self._vm("POST", "/eval", {"expression": expression})
+
+    def screenshot(self, path: str | None = None) -> bytes:
+        """Take a screenshot. Returns JPEG bytes. Optionally saves to path."""
+        res = urllib.request.urlopen(f"{self.vm_url}/screenshot", data=b"", timeout=30)
+        img = res.read()
+        if path:
+            with open(path, "wb") as f:
+                f.write(img)
+        return img
+
+    def url(self) -> dict:
+        """Get current URL and title."""
+        return self._vm("GET", "/url")
+
+    def text(self) -> str:
+        """Get page text content."""
+        return self._vm("GET", "/text").get("text", "")
+
+    def html(self) -> str:
+        """Get page HTML."""
+        return self._vm("GET", "/html").get("html", "")
+
+    def cookies(self) -> list:
+        """Get all cookies."""
+        return self._vm("GET", "/cookies").get("cookies", [])
+
+    def set_cookies(self, cookies: list[dict]):
+        """Set cookies."""
+        return self._vm("POST", "/cookies", {"cookies": cookies})
+
+    def health(self) -> dict:
+        """Health check."""
+        return self._vm("GET", "/health")
+
+    # ── Sleep / Wake ──────────────────────────────────────
 
     def sleep(self) -> dict:
-        """
-        Checkpoint the browser to NVMe. Costs $0 while sleeping.
-        WebSocket connections will drop — reconnect after wake().
-        """
-        if self._state != "running":
-            raise RuntimeError(f"Cannot sleep in state: {self._state}")
-
-        res = self._orb(
-            "POST",
-            f"/v1/computers/{self.computer_id}/agents/demote",
-            {"port": self.agent_port},
-        )
-        if res.get("status") != "demoted":
-            raise RuntimeError(f"Sleep failed: {res}")
-
+        """Checkpoint the browser. $0 while sleeping."""
+        res = self._orb("POST", f"/v1/computers/{self.computer_id}/agents/demote", {"port": self.agent_port})
         self._state = "sleeping"
         print(f"[orb-browser] Sleeping (frozen, $0)")
         return res
 
-    def wake(self, wait: bool = True) -> str:
-        """
-        Restore the browser from NVMe. ~500ms.
-        Returns the CDP URL (same as before sleep).
-        Reconnect browser-use with the returned URL.
-        """
-        if self._state != "sleeping":
-            raise RuntimeError(f"Cannot wake in state: {self._state}")
-
-        res = self._orb(
-            "POST",
-            f"/v1/computers/{self.computer_id}/agents/promote",
-            {"port": self.agent_port},
-        )
-        if res.get("status") != "promoted":
-            raise RuntimeError(f"Wake failed: {res}")
-
+    def wake(self) -> str:
+        """Restore the browser. ~500ms. Returns VM URL."""
+        res = self._orb("POST", f"/v1/computers/{self.computer_id}/agents/promote", {"port": self.agent_port})
         if res.get("port"):
             self.agent_port = res["port"]
-
-        if wait:
-            self._wait_for_health(timeout=30)
-
-        # Refresh CDP URL
-        vm_url = f"https://{self.short_id}.orbcloud.dev"
-        cdp_data = json.loads(urllib.request.urlopen(f"{vm_url}/cdp").read())
-        self.cdp_url = cdp_data["cdpUrl"]
+        self._wait_for_health(timeout=30)
         self._state = "running"
+        print(f"[orb-browser] Awake!")
+        return self.vm_url
 
-        print(f"[orb-browser] Awake! CDP: {self.cdp_url}")
-        return self.cdp_url
+    # ── Lifecycle ─────────────────────────────────────────
 
     def destroy(self):
         """Delete the VM."""
@@ -238,43 +229,48 @@ class OrbBrowser:
         except urllib.error.HTTPError:
             pass
         self._state = "destroyed"
-        print(f"[orb-browser] Destroyed {self.short_id}")
+        print(f"[orb-browser] Destroyed")
 
     @property
     def vm_url(self) -> str | None:
         return f"https://{self.short_id}.orbcloud.dev" if self.short_id else None
 
     @property
+    def live_url(self) -> str | None:
+        return f"{self.vm_url}/live" if self.vm_url else None
+
+    @property
     def state(self) -> str:
         return self._state
 
-    # -- Internal --
+    # ── Internal ──────────────────────────────────────────
 
     def _orb(self, method: str, path: str, body: dict | None = None) -> dict:
         data = json.dumps(body).encode() if body is not None else None
         req = urllib.request.Request(
-            f"{self.api_url}{path}",
-            data=data,
-            headers={
-                "Authorization": f"Bearer {self.api_key}",
-                "Content-Type": "application/json",
-            },
+            f"{self.api_url}{path}", data=data,
+            headers={"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"},
             method=method,
         )
         try:
             return json.loads(urllib.request.urlopen(req).read())
         except urllib.error.HTTPError as e:
-            body_text = e.read().decode() if e.fp else ""
-            raise RuntimeError(
-                f"Orb API {method} {path} failed ({e.code}): {body_text}"
-            )
+            raise RuntimeError(f"Orb API {method} {path} ({e.code}): {e.read().decode()}")
+
+    def _vm(self, method: str, path: str, body: dict | None = None) -> dict:
+        data = json.dumps(body).encode() if body is not None else None
+        req = urllib.request.Request(
+            f"{self.vm_url}{path}", data=data,
+            headers={"Content-Type": "application/json"} if data else {},
+            method=method,
+        )
+        return json.loads(urllib.request.urlopen(req, timeout=30).read())
 
     def _wait_for_health(self, timeout: int = 60):
-        vm_url = f"https://{self.short_id}.orbcloud.dev"
         start = time.time()
         while time.time() - start < timeout:
             try:
-                res = urllib.request.urlopen(f"{vm_url}/health", timeout=5)
+                res = urllib.request.urlopen(f"{self.vm_url}/health", timeout=5)
                 data = json.loads(res.read())
                 if data.get("status") == "ok" and data.get("browserReady"):
                     return

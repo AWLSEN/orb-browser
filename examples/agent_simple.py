@@ -1,56 +1,31 @@
 """
-Simple agent example — one class, obvious methods.
+Deploy a browser on Orb Cloud, browse, sleep, wake.
 
-Usage:
-    ORB_API_KEY=orb_... python examples/agent_simple.py
+Usage: ORB_API_KEY=orb_... python examples/agent_simple.py
 """
 
-import asyncio
 import os
-from orb_browser import Browser
+from orb_browser import OrbBrowser
 
-ORB_KEY = os.environ.get("ORB_API_KEY")
-if not ORB_KEY:
-    print("Set ORB_API_KEY")
-    exit(1)
+orb = OrbBrowser(api_key=os.environ["ORB_API_KEY"])
 
+# Deploy (~1-2 min)
+orb.deploy()
 
-async def main():
-    # Deploy a browser
-    browser = await Browser.create(api_key=ORB_KEY)
-    print(f"Computer ID: {browser.computer_id}")
+# Browse
+print(orb.navigate("https://news.ycombinator.com"))
+orb.screenshot("hn.jpg")
+print(f"Screenshot saved. URL: {orb.url()}")
 
-    # Navigate
-    await browser.go_to("https://news.ycombinator.com")
-    print(f"Title: {await browser.title()}")
-    print(f"URL: {await browser.url()}")
+# Sleep — frozen to NVMe, $0
+computer_id = orb.computer_id
+orb.sleep()
 
-    # Screenshot
-    img = await browser.screenshot("hn.png")
-    print(f"Screenshot: {len(img)} bytes")
+import time; time.sleep(5)
 
-    # Scroll
-    await browser.scroll("down", 500)
-    await browser.wait(1)
-    print(f"Scrolled. Title: {await browser.title()}")
+# Wake — ~500ms, everything restored
+orb.wake()
+print(f"After wake: {orb.url()}")
 
-    # Sleep
-    computer_id = await browser.sleep()
-    print(f"Sleeping. ID: {computer_id}")
-
-    await asyncio.sleep(5)
-
-    # Wake
-    await browser.wake()
-    print(f"Awake! Title: {await browser.title()}")
-
-    # Navigate after wake
-    await browser.go_to("https://example.com")
-    print(f"After wake navigate: {await browser.title()}")
-
-    # Clean up
-    await browser.close()
-    print("Done.")
-
-
-asyncio.run(main())
+# Clean up
+orb.destroy()
