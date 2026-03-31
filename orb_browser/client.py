@@ -25,7 +25,9 @@ import time
 import urllib.request
 import urllib.error
 
-ORB_TOML = """[agent]
+def _make_orb_toml(provider="custom", llm_key="", llm_provider="openai"):
+    """Generate orb.toml with the right LLM provider for Orb optimization."""
+    return f"""[agent]
 name = "orb-browser"
 lang = "python"
 entry = "agent.py"
@@ -36,19 +38,21 @@ branch = "main"
 
 [build]
 steps = [
-  "pip install playwright browser-use fastapi uvicorn uv",
+  "pip install playwright browser-use fastapi uvicorn uv langchain-openai langchain-anthropic",
   "PLAYWRIGHT_BROWSERS_PATH=/opt/browsers playwright install chromium",
 ]
 working_dir = "/agent/code"
 
 [agent.env]
 PLAYWRIGHT_BROWSERS_PATH = "/opt/browsers"
+LLM_API_KEY = "{llm_key}"
+LLM_PROVIDER = "{llm_provider}"
 
 [lifecycle]
-idle_timeout = "3600s"
+idle_timeout = "300s"
 
 [backend]
-provider = "custom"
+provider = "{provider}"
 
 [ports]
 expose = [8000]
@@ -68,7 +72,8 @@ class OrbBrowser:
 
     # ── Deploy ────────────────────────────────────────────
 
-    def deploy(self, name: str | None = None, wait: bool = True) -> str:
+    def deploy(self, name: str | None = None, wait: bool = True,
+               llm_key: str = "", llm_provider: str = "openai") -> str:
         """Deploy a browser on Orb Cloud. Returns the VM URL."""
         if name is None:
             name = f"orb-browser-{int(time.time())}"
@@ -84,10 +89,12 @@ class OrbBrowser:
         print(f"[orb-browser] VM: {self.short_id}")
 
         try:
-            # Upload config
+            # Upload config — provider tells Orb which LLM to optimize around
+            orb_provider = {"openai": "openai", "anthropic": "anthropic"}.get(llm_provider, "custom")
+            toml = _make_orb_toml(provider=orb_provider, llm_key=llm_key, llm_provider=llm_provider)
             req = urllib.request.Request(
                 f"{self.api_url}/v1/computers/{self.computer_id}/config",
-                data=ORB_TOML.encode(),
+                data=toml.encode(),
                 headers={"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/toml"},
                 method="POST",
             )
@@ -169,6 +176,26 @@ class OrbBrowser:
             with open(path, "wb") as f:
                 f.write(img)
         return img
+
+    def task(self, prompt: str, llm_key: str | None = None,
+             provider: str | None = None, model: str | None = None,
+             max_steps: int = 50) -> str:
+        """Run a natural language task. browser-use Agent executes it on Orb."""
+        body = {"task": prompt, "max_steps": max_steps}
+        if llm_key:
+            body["llm_key"] = llm_key
+        if provider:
+            body["provider"] = provider
+        if model:
+            body["model"] = model
+        res = urllib.request.Request(
+            f"{self.vm_url}/task",
+            data=json.dumps(body).encode(),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        result = json.loads(urllib.request.urlopen(res, timeout=300).read())
+        return result.get("result", result)
 
     def url(self) -> dict:
         """Get current URL and title."""

@@ -20,7 +20,9 @@ Usage:
     orb-browser live               Open live view in your browser
     orb-browser status             Show browser status
     orb-browser destroy            Delete the browser VM
-    orb-browser auth <key>         Save API key
+    orb-browser task <prompt>      Run a task (natural language → browser-use)
+    orb-browser setup              Set up API keys and provider
+    orb-browser auth <key>         Save Orb API key
     orb-browser signup <email>     Create account and save key
 """
 
@@ -80,6 +82,57 @@ def main():
 
     cmd = args[0]
 
+    # ── Setup ─────────────────────────────────────────
+    if cmd == "setup":
+        config = load_config()
+        print("orb-browser setup")
+        print("=" * 40)
+        orb_key = input(f"Orb API key [{config.get('api_key', '')}]: ").strip()
+        if orb_key:
+            config["api_key"] = orb_key
+        llm_key = input(f"LLM API key [{config.get('llm_key', '')}]: ").strip()
+        if llm_key:
+            config["llm_key"] = llm_key
+        provider = input(f"LLM provider (openai/anthropic) [{config.get('provider', 'openai')}]: ").strip()
+        if provider:
+            config["provider"] = provider
+        elif "provider" not in config:
+            config["provider"] = "openai"
+        save_config(config)
+        print(f"\nSaved to {CONFIG_FILE}")
+        return
+
+    # ── Task ──────────────────────────────────────────
+    if cmd == "task":
+        if len(args) < 2:
+            print("Usage: orb-browser task \"<prompt>\"")
+            return
+        prompt = " ".join(args[1:])
+        orb = get_orb()
+        config = load_config()
+        llm_key = config.get("llm_key", "")
+        provider = config.get("provider", "openai")
+        if not llm_key:
+            print("No LLM key configured. Run: orb-browser setup")
+            return
+        import urllib.request
+        import urllib.error
+        req = urllib.request.Request(
+            f"{orb.vm_url}/task",
+            data=json.dumps({"task": prompt, "llm_key": llm_key, "provider": provider}).encode(),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        try:
+            res = json.loads(urllib.request.urlopen(req, timeout=300).read())
+            if "result" in res:
+                print(res["result"])
+            else:
+                print(json.dumps(res, indent=2))
+        except urllib.error.HTTPError as e:
+            print(f"Error: {e.read().decode()}")
+        return
+
     # ── Auth ──────────────────────────────────────────
     if cmd == "auth":
         if len(args) < 2:
@@ -124,7 +177,11 @@ def main():
     # ── Deploy ────────────────────────────────────────
     if cmd == "deploy":
         orb = get_orb()
-        orb.deploy()
+        config = load_config()
+        orb.deploy(
+            llm_key=config.get("llm_key", ""),
+            llm_provider=config.get("provider", "openai"),
+        )
         save_state(orb)
         print(orb.vm_url)
         return

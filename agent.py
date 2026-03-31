@@ -230,6 +230,65 @@ async def clear_cookies():
     return {"ok": True}
 
 
+# ── Task (natural language → browser-use Agent) ───────────
+
+class TaskRequest(BaseModel):
+    task: str
+    provider: Optional[str] = None  # "openai" or "anthropic" — overrides env
+    llm_key: Optional[str] = None   # overrides env LLM_API_KEY
+    model: Optional[str] = None     # e.g. "gpt-4o", "claude-sonnet-4-20250514"
+    max_steps: int = 50
+
+@app.post("/task")
+async def run_task(req: TaskRequest):
+    """Run a natural language task using browser-use Agent."""
+    if not browser:
+        return JSONResponse({"error": "browser not ready"}, 503)
+
+    provider = req.provider or os.environ.get("LLM_PROVIDER", "openai")
+    api_key = req.llm_key or os.environ.get("LLM_API_KEY", "")
+    if not api_key:
+        return JSONResponse({"error": "No LLM key. Pass llm_key or set LLM_API_KEY env var."}, 400)
+
+    try:
+        # Create LLM based on provider
+        if provider == "anthropic":
+            from langchain_anthropic import ChatAnthropic
+            model = req.model or "claude-sonnet-4-20250514"
+            llm = ChatAnthropic(model=model, api_key=api_key)
+        else:
+            from langchain_openai import ChatOpenAI
+            model = req.model or "gpt-4o"
+            llm = ChatOpenAI(model=model, api_key=api_key)
+
+        # Run browser-use agent
+        from browser_use import Agent, Browser as BUBrowser
+        bu_browser = BUBrowser(
+            headless=True,
+            disable_security=True,
+            enable_default_extensions=False,
+            is_local=True,
+            executable_path=None,  # use system playwright
+        )
+
+        agent = Agent(
+            task=req.task,
+            llm=llm,
+            browser=bu_browser,
+            use_vision=True,
+            max_actions_per_step=5,
+        )
+        result = await agent.run(max_steps=req.max_steps)
+
+        # Extract the final result
+        final = result.final_result() if hasattr(result, 'final_result') else str(result)
+
+        return {"task": req.task, "result": final, "model": model, "provider": provider}
+
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, 500)
+
+
 # ── Live Browser View ─────────────────────────────────────
 # Opens in your browser. See the remote Chrome screen.
 # Click anywhere to click. Type to type. Log in manually.
