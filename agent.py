@@ -244,28 +244,35 @@ class TaskRequest(BaseModel):
     max_steps: int = 50
 
 
+def _call_llm_sync(base_url: str, api_key: str, model: str, messages: list[dict]) -> str:
+    """Sync LLM call via OpenAI-compatible API. Runs in thread pool to not block event loop."""
+    import httpx
+    url = f"{base_url}/chat/completions"
+    resp = httpx.post(
+        url,
+        headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+        json={"model": model, "messages": messages, "max_tokens": 256},
+        timeout=60,
+    )
+    resp.raise_for_status()
+    return resp.json()["choices"][0]["message"]["content"]
+
+
 async def _run_task_loop(task_id: str, req: TaskRequest):
     """Background coroutine that runs the vision agent loop."""
     task_state = tasks[task_id]
-    provider = req.provider or os.environ.get("LLM_PROVIDER", "openai")
     api_key = req.llm_key or os.environ.get("LLM_API_KEY", "")
-    base_url_val = req.base_url or os.environ.get("LLM_BASE_URL", "")
+    base_url_val = req.base_url or os.environ.get("LLM_BASE_URL", "") or "https://api.openai.com/v1"
     model = req.model or "gpt-4o"
 
     task_page = None
     try:
-        from browser_use.llm.vercel import ChatVercel
-        from browser_use.llm.messages import UserMessage, AssistantMessage, ContentPartImageParam, ContentPartTextParam, ImageURL
-
-        kwargs = {"model": model, "api_key": api_key}
-        if base_url_val:
-            kwargs["base_url"] = base_url_val
-        llm = ChatVercel(**kwargs)
-
         task_page = await context.new_page()
         print(f"[task {task_id}] Page created")
 
-        messages = [UserMessage(content=f"You are a browser automation agent. You can see a screenshot of the browser. Respond with EXACTLY one action in this format:\n- GOTO url\n- CLICK x y\n- TYPE text\n- SCROLL down/up\n- DONE result\n\nTask: {req.task}")]
+        system_prompt = f"You are a browser automation agent. You can see a screenshot of the browser. Respond with EXACTLY one action in this format:\n- GOTO url\n- CLICK x y\n- TYPE text\n- SCROLL down/up\n- DONE result\n\nTask: {req.task}"
+
+        messages = [{"role": "system", "content": system_prompt}]
 
         for step in range(req.max_steps):
             task_state["steps"] = step + 1
@@ -275,31 +282,36 @@ async def _run_task_loop(task_id: str, req: TaskRequest):
             b64 = base64.b64encode(screenshot_bytes).decode()
 
             # Keep only last 3 image messages to avoid payload bloat
-            img_count = sum(1 for m in messages if isinstance(m, UserMessage) and isinstance(m.content, list))
-            if img_count >= 3:
-                # Remove oldest image message (skip system message at index 0)
-                for i in range(1, len(messages)):
-                    if isinstance(messages[i], UserMessage) and isinstance(messages[i].content, list):
-                        messages.pop(i)
-                        break
+            img_msgs = [i for i, m in enumerate(messages) if m["role"] == "user" and isinstance(m.get("content"), list)]
+            while len(img_msgs) >= 3:
+                messages.pop(img_msgs[0])
+                img_msgs = [i for i, m in enumerate(messages) if m["role"] == "user" and isinstance(m.get("content"), list)]
 
-            messages.append(UserMessage(content=[
-                ContentPartTextParam(text=f"Step {step+1}. Current URL: {task_page.url}. What action should I take?"),
-                ContentPartImageParam(image_url=ImageURL(url=f"data:image/jpeg;base64,{b64}", media_type="image/jpeg")),
-            ]))
+            messages.append({
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": f"Step {step+1}. Current URL: {task_page.url}. What action should I take?"},
+                    {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}},
+                ],
+            })
 
-            print(f"[task {task_id}] Step {step+1}: calling LLM...")
+            print(f"[task {task_id}] Step {step+1}: calling LLM in thread...")
             try:
-                response = await asyncio.wait_for(llm.ainvoke(messages), timeout=60)
+                action = await asyncio.wait_for(
+                    asyncio.get_event_loop().run_in_executor(
+                        None, _call_llm_sync, base_url_val, api_key, model, messages
+                    ),
+                    timeout=90,
+                )
             except asyncio.TimeoutError:
-                print(f"[task {task_id}] Step {step+1}: LLM timed out after 60s")
+                print(f"[task {task_id}] Step {step+1}: LLM timed out")
                 task_state["status"] = "error"
                 task_state["error"] = f"LLM call timed out at step {step+1}"
                 return
 
-            print(f"[task {task_id}] Step {step+1}: LLM responded")
-            action = response.completion.strip()
-            messages.append(AssistantMessage(content=action))
+            action = action.strip()
+            print(f"[task {task_id}] Step {step+1}: LLM responded: {action[:60]}")
+            messages.append({"role": "assistant", "content": action})
             task_state["last_action"] = action
 
             if action.startswith("GOTO "):
