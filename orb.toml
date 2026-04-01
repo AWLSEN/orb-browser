@@ -21,7 +21,7 @@ PLAYWRIGHT_BROWSERS_PATH = "/opt/browsers"
 idle_timeout = "3600s"
 
 [backend]
-provider = "multi"
+provider = "openai"
 
 [ports]
 expose = [8000]
