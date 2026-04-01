@@ -245,18 +245,33 @@ class TaskRequest(BaseModel):
 
 
 def _call_llm_sync(base_url: str, api_key: str, model: str, messages: list[dict]) -> str:
-    """Sync LLM call via OpenAI-compatible API. Runs in thread pool to not block event loop."""
-    import httpx
+    """Sync LLM call via subprocess curl to avoid blocking Orb's proxy."""
+    import subprocess, json as _json, tempfile
+    payload = _json.dumps({"model": model, "messages": messages, "max_tokens": 256})
     url = f"{base_url}/chat/completions"
-    resp = httpx.post(
-        url,
-        headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
-        json={"model": model, "messages": messages, "max_tokens": 256},
-        timeout=60,
-    )
-    if resp.status_code >= 400:
-        raise RuntimeError(f"LLM API {resp.status_code}: {resp.text[:500]}")
-    return resp.json()["choices"][0]["message"]["content"]
+
+    # Write payload to temp file to avoid shell escaping issues with base64
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
+        f.write(payload)
+        tmp = f.name
+
+    try:
+        result = subprocess.run(
+            ["curl", "-s", "--max-time", "60", "-X", "POST", url,
+             "-H", f"Authorization: Bearer {api_key}",
+             "-H", "Content-Type: application/json",
+             "-d", f"@{tmp}"],
+            capture_output=True, text=True, timeout=70,
+        )
+        if result.returncode != 0:
+            raise RuntimeError(f"curl failed ({result.returncode}): {result.stderr[:300]}")
+        resp = _json.loads(result.stdout)
+        if "error" in resp:
+            raise RuntimeError(f"LLM API error: {resp['error']}")
+        return resp["choices"][0]["message"]["content"]
+    finally:
+        import os as _os
+        _os.unlink(tmp)
 
 
 def _log(msg: str):
@@ -359,8 +374,14 @@ async def _run_task_loop(task_id: str, req: TaskRequest):
                 pass
 
 
+class TestRequest(BaseModel):
+    llm_key: str
+    base_url: str = "https://openrouter.ai/api/v1"
+    model: str = "anthropic/claude-3.5-haiku"
+
+
 @app.post("/task/test")
-async def test_task():
+async def test_task(req: TestRequest):
     """Diagnostic: test each step of the task pipeline individually."""
     results = {}
     import time
@@ -387,16 +408,13 @@ async def test_task():
     b64 = base64.b64encode(ss).decode()
     results["base64"] = f"OK {len(b64)} chars ({time.time()-t0:.2f}s)"
 
-    # Test 4: LLM call in thread (text only, no image)
+    # Test 4: LLM text call via subprocess curl
     t0 = time.time()
     try:
         loop = asyncio.get_running_loop()
         answer = await asyncio.wait_for(
             loop.run_in_executor(
-                None, _call_llm_sync,
-                "https://openrouter.ai/api/v1",
-                os.environ.get("LLM_API_KEY", "test"),
-                "anthropic/claude-3.5-haiku",
+                None, _call_llm_sync, req.base_url, req.llm_key, req.model,
                 [{"role": "user", "content": "Say hello in one word"}],
             ),
             timeout=30,
@@ -405,22 +423,19 @@ async def test_task():
     except Exception as e:
         results["llm_text"] = f"FAIL: {e}"
 
-    # Test 5: LLM call with image
+    # Test 5: LLM vision call via subprocess curl
     t0 = time.time()
     try:
         loop = asyncio.get_running_loop()
         answer = await asyncio.wait_for(
             loop.run_in_executor(
-                None, _call_llm_sync,
-                "https://openrouter.ai/api/v1",
-                os.environ.get("LLM_API_KEY", "test"),
-                "anthropic/claude-3.5-haiku",
+                None, _call_llm_sync, req.base_url, req.llm_key, req.model,
                 [{"role": "user", "content": [
                     {"type": "text", "text": "What color is this page? One word."},
                     {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}},
                 ]}],
             ),
-            timeout=30,
+            timeout=60,
         )
         results["llm_vision"] = f"OK: {answer[:50]} ({time.time()-t0:.2f}s)"
     except Exception as e:
