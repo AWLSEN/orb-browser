@@ -98,6 +98,9 @@ def main():
             config["provider"] = provider
         elif "provider" not in config:
             config["provider"] = "openai"
+        base_url = input(f"LLM base URL (blank for default, or paste for GLM/Groq/etc) [{config.get('base_url', '')}]: ").strip()
+        if base_url:
+            config["base_url"] = base_url
         save_config(config)
         print(f"\nSaved to {CONFIG_FILE}")
         return
@@ -117,9 +120,12 @@ def main():
             return
         import urllib.request
         import urllib.error
+        task_body = {"task": prompt, "llm_key": llm_key, "provider": provider}
+        if config.get("base_url"):
+            task_body["base_url"] = config["base_url"]
         req = urllib.request.Request(
             f"{orb.vm_url}/task",
-            data=json.dumps({"task": prompt, "llm_key": llm_key, "provider": provider}).encode(),
+            data=json.dumps(task_body).encode(),
             headers={"Content-Type": "application/json"},
             method="POST",
         )

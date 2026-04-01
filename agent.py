@@ -234,9 +234,10 @@ async def clear_cookies():
 
 class TaskRequest(BaseModel):
     task: str
-    provider: Optional[str] = None  # "openai" or "anthropic" — overrides env
-    llm_key: Optional[str] = None   # overrides env LLM_API_KEY
-    model: Optional[str] = None     # e.g. "gpt-4o", "claude-sonnet-4-20250514"
+    provider: Optional[str] = None   # "openai", "anthropic", or any openai-compatible
+    llm_key: Optional[str] = None    # overrides env LLM_API_KEY
+    model: Optional[str] = None      # e.g. "gpt-4o", "claude-sonnet-4-20250514"
+    base_url: Optional[str] = None   # for openai-compatible APIs (GLM, Groq, Together, etc)
     max_steps: int = 50
 
 @app.post("/task")
@@ -252,14 +253,19 @@ async def run_task(req: TaskRequest):
 
     try:
         # Create LLM based on provider
+        base_url = req.base_url or os.environ.get("LLM_BASE_URL", "")
         if provider == "anthropic":
             from langchain_anthropic import ChatAnthropic
             model = req.model or "claude-sonnet-4-20250514"
             llm = ChatAnthropic(model=model, api_key=api_key)
         else:
+            # Works with OpenAI, GLM, Groq, Together, Ollama, any OpenAI-compatible API
             from langchain_openai import ChatOpenAI
             model = req.model or "gpt-4o"
-            llm = ChatOpenAI(model=model, api_key=api_key)
+            kwargs = {"model": model, "api_key": api_key}
+            if base_url:
+                kwargs["base_url"] = base_url
+            llm = ChatOpenAI(**kwargs)
 
         # Run browser-use agent
         from browser_use import Agent, Browser as BUBrowser
