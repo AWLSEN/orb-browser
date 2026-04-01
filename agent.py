@@ -264,7 +264,7 @@ async def run_task(req: TaskRequest):
 
         # Simple agent loop — screenshot → LLM → act → repeat
         # No browser-use dependency, uses our existing Playwright browser
-        from browser_use.llm.messages import UserMessage, AssistantMessage, ContentImage, ContentText
+        from browser_use.llm.messages import UserMessage, AssistantMessage, ContentPartImageParam, ContentPartTextParam, ImageURL
         import base64
 
         messages = [UserMessage(content=f"You are a browser automation agent. You can see a screenshot of the browser. Respond with EXACTLY one action in this format:\n- GOTO url\n- CLICK x y\n- TYPE text\n- SCROLL down/up\n- DONE result\n\nTask: {req.task}")]
@@ -277,8 +277,8 @@ async def run_task(req: TaskRequest):
 
             # Add screenshot to messages
             messages.append(UserMessage(content=[
-                ContentText(text=f"Step {step+1}. Current URL: {page.url}. What action should I take?"),
-                ContentImage(image=f"data:image/jpeg;base64,{b64}"),
+                ContentPartTextParam(text=f"Step {step+1}. Current URL: {page.url}. What action should I take?"),
+                ContentPartImageParam(image_url=ImageURL(url=f"data:image/jpeg;base64,{b64}", media_type="image/jpeg")),
             ]))
 
             # Ask LLM
