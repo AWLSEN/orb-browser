@@ -380,7 +380,7 @@ async def _run_task_loop(task_id: str, req: TaskRequest):
     except Exception as e:
         _log(f"[task {task_id}] Error: {e}")
         task_state["status"] = "error"
-        task_state["error"] = str(e)
+        task_state["error"] = f"{type(e).__name__}: {e}" or traceback.format_exc()
         task_state["traceback"] = traceback.format_exc()
     finally:
         if task_page:
@@ -485,7 +485,7 @@ async def run_task(req: TaskRequest):
 
     t = tasks[task_id]
     if t["status"] == "error":
-        return JSONResponse({"error": t["error"], "steps": t["steps"]}, 500)
+        return JSONResponse({"error": t["error"], "traceback": t.get("traceback", ""), "steps": t["steps"]}, 500)
     return {"task": req.task, "result": t["result"], "model": t["model"], "steps": t["steps"]}
 
 
