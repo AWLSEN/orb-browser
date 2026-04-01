@@ -260,34 +260,23 @@ class TaskRequest(BaseModel):
     max_steps: int = 50
 
 
-def _call_llm_sync(base_url: str, api_key: str, model: str, messages: list[dict]) -> str:
-    """Sync LLM call via subprocess curl to avoid blocking Orb's proxy."""
-    import subprocess, json as _json, tempfile
-    payload = _json.dumps({"model": model, "messages": messages, "max_tokens": 256})
+async def _call_llm(base_url: str, api_key: str, model: str, messages: list[dict]) -> str:
+    """Call LLM via OpenAI-compatible API. Uses Orb's proxy when available."""
+    import httpx, json as _json
     url = f"{base_url}/chat/completions"
+    headers = {"Content-Type": "application/json"}
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
 
-    # Write payload to temp file to avoid shell escaping issues with base64
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
-        f.write(payload)
-        tmp = f.name
-
-    try:
-        result = subprocess.run(
-            ["curl", "-s", "--max-time", "60", "-X", "POST", url,
-             "-H", f"Authorization: Bearer {api_key}",
-             "-H", "Content-Type: application/json",
-             "-d", f"@{tmp}"],
-            capture_output=True, text=True, timeout=70,
-        )
-        if result.returncode != 0:
-            raise RuntimeError(f"curl failed ({result.returncode}): {result.stderr[:300]}")
-        resp = _json.loads(result.stdout)
-        if "error" in resp:
-            raise RuntimeError(f"LLM API error: {resp['error']}")
-        return resp["choices"][0]["message"]["content"]
-    finally:
-        import os as _os
-        _os.unlink(tmp)
+    async with httpx.AsyncClient(timeout=120) as client:
+        resp = await client.post(url, headers=headers,
+                                 json={"model": model, "messages": messages, "max_tokens": 256})
+    if resp.status_code >= 400:
+        raise RuntimeError(f"LLM API {resp.status_code}: {resp.text[:500]}")
+    data = resp.json()
+    if "error" in data:
+        raise RuntimeError(f"LLM API error: {data['error']}")
+    return data["choices"][0]["message"]["content"]
 
 
 def _log(msg: str):
@@ -300,8 +289,10 @@ async def _run_task_loop(task_id: str, req: TaskRequest):
     """Background coroutine that runs the vision agent loop."""
     task_state = tasks[task_id]
     api_key = req.llm_key or os.environ.get("LLM_API_KEY", "")
-    base_url_val = req.base_url or os.environ.get("LLM_BASE_URL", "") or "https://api.openai.com/v1"
+    # Default to Orb's LLM proxy (handles checkpoint/restore transparently)
+    base_url_val = req.base_url or os.environ.get("OPENAI_BASE_URL", "") or os.environ.get("LLM_BASE_URL", "") or "https://api.openai.com/v1"
     model = req.model or "gpt-4o"
+    _log(f"[task {task_id}] LLM base_url={base_url_val} model={model}")
 
     task_page = None
     try:
@@ -340,14 +331,11 @@ async def _run_task_loop(task_id: str, req: TaskRequest):
                 ],
             })
 
-            _log(f"[task {task_id}] Step {step+1}: dispatching LLM to thread...")
-            loop = asyncio.get_running_loop()
+            _log(f"[task {task_id}] Step {step+1}: calling LLM...")
             try:
                 action = await asyncio.wait_for(
-                    loop.run_in_executor(
-                        None, _call_llm_sync, base_url_val, api_key, model, messages
-                    ),
-                    timeout=90,
+                    _call_llm(base_url_val, api_key, model, messages),
+                    timeout=120,
                 )
             except asyncio.TimeoutError:
                 _log(f"[task {task_id}] Step {step+1}: LLM timed out")
@@ -429,33 +417,29 @@ async def test_task(req: TestRequest):
     b64 = base64.b64encode(ss).decode()
     results["base64"] = f"OK {len(b64)} chars ({time.time()-t0:.2f}s)"
 
-    # Test 4: LLM text call via subprocess curl
+    # Test 4: LLM text call
+    base = req.base_url or os.environ.get("OPENAI_BASE_URL", "https://api.openai.com/v1")
+    results["llm_base_url"] = base
     t0 = time.time()
     try:
-        loop = asyncio.get_running_loop()
         answer = await asyncio.wait_for(
-            loop.run_in_executor(
-                None, _call_llm_sync, req.base_url, req.llm_key, req.model,
-                [{"role": "user", "content": "Say hello in one word"}],
-            ),
-            timeout=30,
+            _call_llm(base, req.llm_key, req.model,
+                      [{"role": "user", "content": "Say hello in one word"}]),
+            timeout=60,
         )
         results["llm_text"] = f"OK: {answer[:50]} ({time.time()-t0:.2f}s)"
     except Exception as e:
         results["llm_text"] = f"FAIL: {e}"
 
-    # Test 5: LLM vision call via subprocess curl
+    # Test 5: LLM vision call
     t0 = time.time()
     try:
-        loop = asyncio.get_running_loop()
         answer = await asyncio.wait_for(
-            loop.run_in_executor(
-                None, _call_llm_sync, req.base_url, req.llm_key, req.model,
-                [{"role": "user", "content": [
-                    {"type": "text", "text": "What color is this page? One word."},
-                    {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}},
-                ]}],
-            ),
+            _call_llm(base, req.llm_key, req.model,
+                      [{"role": "user", "content": [
+                          {"type": "text", "text": "What color is this page? One word."},
+                          {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}},
+                      ]}]),
             timeout=60,
         )
         results["llm_vision"] = f"OK: {answer[:50]} ({time.time()-t0:.2f}s)"
@@ -519,29 +503,20 @@ async def ask(req: AskRequest):
         return JSONResponse({"error": "browser not ready"}, 503)
 
     api_key = req.llm_key or os.environ.get("LLM_API_KEY", "")
-    if not api_key:
-        return JSONResponse({"error": "No LLM key"}, 400)
+    base_url = req.base_url or os.environ.get("OPENAI_BASE_URL", "") or "https://api.openai.com/v1"
+    model = req.model or "gpt-4o"
 
     try:
         # Navigate and get text
         await page.goto(req.url, wait_until="domcontentloaded", timeout=30000)
         text = await page.inner_text("body")
-        text = text[:8000]  # Limit to avoid token overflow
+        text = text[:8000]
 
-        # Ask LLM
-        from browser_use.llm.vercel import ChatVercel
-        from browser_use.llm.messages import UserMessage
+        # Ask LLM via Orb proxy
+        answer = await _call_llm(base_url, api_key, model,
+                                 [{"role": "user", "content": f"Here is the content of {req.url}:\n\n{text}\n\nQuestion: {req.question}"}])
 
-        model = req.model or "gpt-4o"
-        kwargs = {"model": model, "api_key": api_key}
-        if req.base_url:
-            kwargs["base_url"] = req.base_url
-        llm = ChatVercel(**kwargs)
-
-        messages = [UserMessage(content=f"Here is the content of {req.url}:\n\n{text}\n\nQuestion: {req.question}")]
-        response = await llm.ainvoke(messages)
-
-        return {"url": req.url, "question": req.question, "answer": response.completion}
+        return {"url": req.url, "question": req.question, "answer": answer}
 
     except Exception as e:
         return JSONResponse({"error": str(e)}, 500)
