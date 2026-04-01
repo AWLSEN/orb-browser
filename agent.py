@@ -254,7 +254,8 @@ def _call_llm_sync(base_url: str, api_key: str, model: str, messages: list[dict]
         json={"model": model, "messages": messages, "max_tokens": 256},
         timeout=60,
     )
-    resp.raise_for_status()
+    if resp.status_code >= 400:
+        raise RuntimeError(f"LLM API {resp.status_code}: {resp.text[:500]}")
     return resp.json()["choices"][0]["message"]["content"]
 
 
