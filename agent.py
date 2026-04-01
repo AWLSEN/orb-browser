@@ -334,7 +334,7 @@ async def _run_task_loop(task_id: str, req: TaskRequest):
             try:
                 action = await asyncio.wait_for(
                     _call_llm(base_url_val, api_key, model, messages),
-                    timeout=120,
+                    timeout=300,
                 )
             except asyncio.TimeoutError:
                 _log(f"[task {task_id}] Step {step+1}: LLM timed out")
