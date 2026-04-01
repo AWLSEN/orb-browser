@@ -272,7 +272,7 @@ async def _call_llm(base_url: str, api_key: str, model: str, messages: list[dict
     last_err = None
     for attempt in range(3):
         try:
-            async with httpx.AsyncClient(timeout=120) as client:
+            async with httpx.AsyncClient(timeout=300) as client:
                 resp = await client.post(url, headers=headers, json=body)
             if resp.status_code >= 400:
                 raise RuntimeError(f"LLM API {resp.status_code}: {resp.text[:500]}")
@@ -280,11 +280,13 @@ async def _call_llm(base_url: str, api_key: str, model: str, messages: list[dict
             if "error" in data:
                 raise RuntimeError(f"LLM API error: {data['error']}")
             return data["choices"][0]["message"]["content"]
-        except (httpx.ConnectError, httpx.ReadError, httpx.WriteError, httpx.PoolTimeout, ConnectionError, OSError) as e:
+        except (httpx.ConnectError, httpx.ReadError, httpx.WriteError,
+                httpx.ReadTimeout, httpx.WriteTimeout, httpx.ConnectTimeout,
+                httpx.PoolTimeout, ConnectionError, OSError) as e:
             last_err = e
-            _log(f"[llm] Attempt {attempt+1} connection error (checkpoint/restore?): {e}")
+            _log(f"[llm] Attempt {attempt+1} error (checkpoint/restore?): {type(e).__name__}: {e}")
             await asyncio.sleep(2)
-    raise RuntimeError(f"LLM call failed after 3 attempts: {last_err}")
+    raise RuntimeError(f"LLM call failed after 3 attempts: {type(last_err).__name__}: {last_err}")
 
 
 def _log(msg: str):
