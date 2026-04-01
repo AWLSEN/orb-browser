@@ -289,9 +289,8 @@ async def _run_task_loop(task_id: str, req: TaskRequest):
     """Background coroutine that runs the vision agent loop."""
     task_state = tasks[task_id]
     api_key = req.llm_key or os.environ.get("LLM_API_KEY", "")
-    # Default to Orb's LLM proxy (handles checkpoint/restore transparently)
-    base_url_val = req.base_url or os.environ.get("OPENAI_BASE_URL", "") or os.environ.get("LLM_BASE_URL", "") or "https://api.openai.com/v1"
-    model = req.model or "gpt-4o"
+    base_url_val = req.base_url or os.environ.get("LLM_BASE_URL", "") or "https://openrouter.ai/api/v1"
+    model = req.model or "google/gemini-2.0-flash-001"
     _log(f"[task {task_id}] LLM base_url={base_url_val} model={model}")
 
     task_page = None
@@ -418,7 +417,7 @@ async def test_task(req: TestRequest):
     results["base64"] = f"OK {len(b64)} chars ({time.time()-t0:.2f}s)"
 
     # Test 4: LLM text call
-    base = req.base_url or os.environ.get("OPENAI_BASE_URL", "https://api.openai.com/v1")
+    base = req.base_url or os.environ.get("LLM_BASE_URL", "https://openrouter.ai/api/v1")
     results["llm_base_url"] = base
     t0 = time.time()
     try:
@@ -503,8 +502,8 @@ async def ask(req: AskRequest):
         return JSONResponse({"error": "browser not ready"}, 503)
 
     api_key = req.llm_key or os.environ.get("LLM_API_KEY", "")
-    base_url = req.base_url or os.environ.get("OPENAI_BASE_URL", "") or "https://api.openai.com/v1"
-    model = req.model or "gpt-4o"
+    base_url = req.base_url or os.environ.get("LLM_BASE_URL", "") or "https://openrouter.ai/api/v1"
+    model = req.model or "google/gemini-2.0-flash-001"
 
     try:
         # Navigate and get text
