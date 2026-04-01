@@ -460,7 +460,7 @@ async def test_task(req: TestRequest):
 
 @app.post("/task")
 async def run_task(req: TaskRequest):
-    """Start a task in the background. Returns task_id to poll with GET /task/{id}."""
+    """Run a vision agent task. Synchronous — Orb checkpoints/restores transparently."""
     if not browser:
         return JSONResponse({"error": "browser not ready"}, 503)
 
@@ -472,7 +472,7 @@ async def run_task(req: TaskRequest):
     tasks[task_id] = {
         "status": "running",
         "task": req.task,
-        "model": req.model or "gpt-4o",
+        "model": req.model or "google/gemini-2.0-flash-001",
         "provider": req.provider or os.environ.get("LLM_PROVIDER", "openai"),
         "result": None,
         "error": None,
@@ -480,10 +480,13 @@ async def run_task(req: TaskRequest):
         "last_action": None,
     }
 
-    asyncio.create_task(_run_task_loop(task_id, req))
-    print(f"[task {task_id}] Started: {req.task[:80]}")
+    _log(f"[task {task_id}] Started: {req.task[:80]}")
+    await _run_task_loop(task_id, req)
 
-    return {"task_id": task_id, "status": "running"}
+    t = tasks[task_id]
+    if t["status"] == "error":
+        return JSONResponse({"error": t["error"], "steps": t["steps"]}, 500)
+    return {"task": req.task, "result": t["result"], "model": t["model"], "steps": t["steps"]}
 
 
 @app.get("/task/{task_id}")

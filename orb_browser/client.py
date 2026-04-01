@@ -180,8 +180,8 @@ class OrbBrowser:
     def task(self, prompt: str, llm_key: str | None = None,
              provider: str | None = None, model: str | None = None,
              base_url: str | None = None,
-             max_steps: int = 50, poll_interval: float = 3) -> str:
-        """Run a natural language task. Starts async, polls until done."""
+             max_steps: int = 50) -> str:
+        """Run a natural language task. Synchronous — waits for completion."""
         body = {"task": prompt, "max_steps": max_steps}
         if llm_key:
             body["llm_key"] = llm_key
@@ -192,37 +192,15 @@ class OrbBrowser:
         if base_url:
             body["base_url"] = base_url
 
-        # Start the task (returns immediately with task_id)
         req = urllib.request.Request(
             f"{self.vm_url}/task",
             data=json.dumps(body).encode(),
             headers={"Content-Type": "application/json"},
             method="POST",
         )
-        start_resp = json.loads(urllib.request.urlopen(req, timeout=30).read())
-        task_id = start_resp.get("task_id")
-        if not task_id:
-            return start_resp  # error case
-
-        # Poll until done
-        timeout = max_steps * 15  # generous timeout
-        elapsed = 0
-        while elapsed < timeout:
-            time.sleep(poll_interval)
-            elapsed += poll_interval
-            try:
-                status_resp = json.loads(urllib.request.urlopen(
-                    f"{self.vm_url}/task/{task_id}", timeout=10
-                ).read())
-            except Exception:
-                continue
-
-            if status_resp.get("status") == "done":
-                return status_resp.get("result", "Done (no result)")
-            elif status_resp.get("status") == "error":
-                return f"Error: {status_resp.get('error', 'unknown')}"
-
-        return "Timed out waiting for task"
+        # Long timeout: Orb checkpoints/restores the VM during LLM calls
+        result = json.loads(urllib.request.urlopen(req, timeout=max_steps * 300).read())
+        return result.get("result", result)
 
     def url(self) -> dict:
         """Get current URL and title."""

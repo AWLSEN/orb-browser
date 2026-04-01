@@ -130,31 +130,12 @@ def main():
             method="POST",
         )
         try:
-            start = json.loads(urllib.request.urlopen(req, timeout=30).read())
-            task_id = start.get("task_id")
-            if not task_id:
-                print(json.dumps(start, indent=2))
-                return
-            print(f"Task started: {task_id}")
-            import time
-            while True:
-                time.sleep(3)
-                status = json.loads(urllib.request.urlopen(
-                    f"{orb.vm_url}/task/{task_id}", timeout=10
-                ).read())
-                if status.get("status") == "running":
-                    step = status.get("steps", 0)
-                    action = status.get("last_action", "")
-                    print(f"  Step {step}: {action[:60] if action else 'working...'}")
-                elif status.get("status") == "done":
-                    print(f"Result: {status.get('result', 'done')}")
-                    break
-                elif status.get("status") == "error":
-                    print(f"Error: {status.get('error', 'unknown')}")
-                    break
-                else:
-                    print(f"Unknown status: {status}")
-                    break
+            print("Running task (VM may checkpoint during LLM calls)...")
+            res = json.loads(urllib.request.urlopen(req, timeout=600).read())
+            if "result" in res:
+                print(f"Result: {res['result']}")
+            else:
+                print(json.dumps(res, indent=2))
         except urllib.error.HTTPError as e:
             print(f"Error: {e.read().decode()}")
         return
