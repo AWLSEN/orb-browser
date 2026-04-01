@@ -308,7 +308,52 @@ async def run_task(req: TaskRequest):
             import asyncio as aio
             await aio.sleep(1)
 
-        return {"task": req.task, "result": final, "model": model, "provider": provider}
+        return {"task": req.task, "result": final or "No result (max steps reached)", "model": model, "provider": provider}
+
+    except Exception as e:
+        import traceback
+        return JSONResponse({"error": str(e), "traceback": traceback.format_exc()}, 500)
+
+
+# ── Ask (simple: navigate + read text + LLM summarize) ────
+
+class AskRequest(BaseModel):
+    url: str
+    question: str
+    llm_key: Optional[str] = None
+    model: Optional[str] = None
+    base_url: Optional[str] = None
+
+@app.post("/ask")
+async def ask(req: AskRequest):
+    """Navigate to a URL, read the text, ask the LLM a question about it."""
+    if not page:
+        return JSONResponse({"error": "browser not ready"}, 503)
+
+    api_key = req.llm_key or os.environ.get("LLM_API_KEY", "")
+    if not api_key:
+        return JSONResponse({"error": "No LLM key"}, 400)
+
+    try:
+        # Navigate and get text
+        await page.goto(req.url, wait_until="domcontentloaded", timeout=30000)
+        text = await page.inner_text("body")
+        text = text[:8000]  # Limit to avoid token overflow
+
+        # Ask LLM
+        from browser_use.llm.vercel import ChatVercel
+        from browser_use.llm.messages import UserMessage
+
+        model = req.model or "gpt-4o"
+        kwargs = {"model": model, "api_key": api_key}
+        if req.base_url:
+            kwargs["base_url"] = req.base_url
+        llm = ChatVercel(**kwargs)
+
+        messages = [UserMessage(content=f"Here is the content of {req.url}:\n\n{text}\n\nQuestion: {req.question}")]
+        response = await llm.ainvoke(messages)
+
+        return {"url": req.url, "question": req.question, "answer": response.completion}
 
     except Exception as e:
         return JSONResponse({"error": str(e)}, 500)
