@@ -307,6 +307,7 @@ async def _run_task_loop(task_id: str, req: TaskRequest):
     try:
         _log(f"[task {task_id}] Creating page...")
         task_page = await context.new_page()
+        await task_page.set_viewport_size({"width": 1280, "height": 800})
         _log(f"[task {task_id}] Page created")
 
         if req.start_url:
@@ -321,7 +322,7 @@ async def _run_task_loop(task_id: str, req: TaskRequest):
         for step in range(req.max_steps):
             task_state["steps"] = step + 1
             _log(f"[task {task_id}] Step {step+1}: taking screenshot...")
-            screenshot_bytes = await task_page.screenshot(type="jpeg", quality=30)
+            screenshot_bytes = await task_page.screenshot(type="jpeg", quality=15)
             _log(f"[task {task_id}] Step {step+1}: screenshot {len(screenshot_bytes)} bytes")
             b64 = base64.b64encode(screenshot_bytes).decode()
             _log(f"[task {task_id}] Step {step+1}: b64 encoded ({len(b64)} chars)")
