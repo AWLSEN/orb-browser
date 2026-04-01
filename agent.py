@@ -237,6 +237,7 @@ async def clear_cookies():
 
 class TaskRequest(BaseModel):
     task: str
+    start_url: Optional[str] = None  # navigate here before starting
     provider: Optional[str] = None   # "openai", "anthropic", or any openai-compatible
     llm_key: Optional[str] = None    # overrides env LLM_API_KEY
     model: Optional[str] = None      # e.g. "gpt-4o", "claude-sonnet-4-20250514"
@@ -293,7 +294,12 @@ async def _run_task_loop(task_id: str, req: TaskRequest):
         task_page = await context.new_page()
         _log(f"[task {task_id}] Page created")
 
-        system_prompt = f"You are a browser automation agent. You can see a screenshot of the browser. Respond with EXACTLY one action in this format:\n- GOTO url\n- CLICK x y\n- TYPE text\n- SCROLL down/up\n- DONE result\n\nTask: {req.task}"
+        if req.start_url:
+            _log(f"[task {task_id}] Navigating to {req.start_url}")
+            await task_page.goto(req.start_url, wait_until="domcontentloaded", timeout=30000)
+            _log(f"[task {task_id}] At {task_page.url}")
+
+        system_prompt = f"You are a browser automation agent. You see a screenshot of the browser at each step. Respond with EXACTLY one action per step:\n- GOTO <url> — navigate to a URL\n- CLICK <x> <y> — click at pixel coordinates\n- TYPE <text> — type text\n- SCROLL down/up — scroll the page\n- DONE <result> — task complete, report the result\n\nRespond with only the action, nothing else.\n\nTask: {req.task}"
 
         messages = [{"role": "system", "content": system_prompt}]
 
