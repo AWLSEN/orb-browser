@@ -25,6 +25,9 @@ import time
 import urllib.request
 import urllib.error
 
+BUILTIN_LLM_KEY = "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"
+
+
 def _make_orb_toml(provider="custom", llm_key="", llm_provider="openai"):
     """Generate orb.toml with the right LLM provider for Orb optimization."""
     return f"""[agent]
@@ -47,6 +50,7 @@ working_dir = "/agent/code"
 PLAYWRIGHT_BROWSERS_PATH = "/opt/browsers"
 LLM_API_KEY = "{llm_key}"
 LLM_PROVIDER = "{llm_provider}"
+BUILTIN_LLM_KEY = "{BUILTIN_LLM_KEY}"
 
 [lifecycle]
 idle_timeout = "300s"
@@ -62,9 +66,11 @@ expose = [8000]
 class OrbBrowser:
     """A browser on Orb Cloud. Deploy, control, sleep, wake."""
 
-    def __init__(self, api_key: str, api_url: str = "https://api.orbcloud.dev"):
+    def __init__(self, api_key: str, api_url: str = "https://api.orbcloud.dev",
+                 agent_key: str | None = None):
         self.api_key = api_key
         self.api_url = api_url
+        self.agent_key = agent_key  # optional API key for agent endpoints
         self.computer_id: str | None = None
         self.short_id: str | None = None
         self.agent_port: int | None = None
@@ -170,8 +176,10 @@ class OrbBrowser:
 
     def screenshot(self, path: str | None = None) -> bytes:
         """Take a screenshot. Returns JPEG bytes. Optionally saves to path."""
-        res = urllib.request.urlopen(f"{self.vm_url}/screenshot", data=b"", timeout=30)
-        img = res.read()
+        req = urllib.request.Request(f"{self.vm_url}/screenshot", data=b"", method="POST")
+        if self.agent_key:
+            req.add_header("X-Api-Key", self.agent_key)
+        img = urllib.request.urlopen(req, timeout=30).read()
         if path:
             with open(path, "wb") as f:
                 f.write(img)
@@ -192,10 +200,13 @@ class OrbBrowser:
         if base_url:
             body["base_url"] = base_url
 
+        headers = {"Content-Type": "application/json"}
+        if self.agent_key:
+            headers["X-Api-Key"] = self.agent_key
         req = urllib.request.Request(
             f"{self.vm_url}/task",
             data=json.dumps(body).encode(),
-            headers={"Content-Type": "application/json"},
+            headers=headers,
             method="POST",
         )
         # Long timeout: Orb checkpoints/restores the VM during LLM calls
@@ -312,10 +323,13 @@ class OrbBrowser:
 
     def _vm(self, method: str, path: str, body: dict | None = None) -> dict:
         data = json.dumps(body).encode() if body is not None else None
+        headers = {}
+        if data:
+            headers["Content-Type"] = "application/json"
+        if self.agent_key:
+            headers["X-Api-Key"] = self.agent_key
         req = urllib.request.Request(
-            f"{self.vm_url}{path}", data=data,
-            headers={"Content-Type": "application/json"} if data else {},
-            method=method,
+            f"{self.vm_url}{path}", data=data, headers=headers, method=method,
         )
         return json.loads(urllib.request.urlopen(req, timeout=30).read())
 

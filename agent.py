@@ -22,14 +22,25 @@ from typing import Optional
 
 app = FastAPI(title="orb-browser", version="0.4.0")
 
+
+@app.middleware("http")
+async def auth_middleware(request, call_next):
+    """Optional API key auth. Set AGENT_API_KEY env var to enable."""
+    expected = os.environ.get("AGENT_API_KEY", "")
+    if expected and request.url.path != "/health":
+        if request.headers.get("x-api-key") != expected:
+            return JSONResponse({"error": "unauthorized"}, 401)
+    return await call_next(request)
+
+
 browser = None
 context = None
 page = None
 init_error = None
 tasks: dict[str, dict] = {}  # task_id -> {status, result, error, steps}
 
-# Built-in OpenRouter key for zero-friction onboarding
-BUILTIN_LLM_KEY = "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"
+# Built-in LLM key for zero-friction onboarding (set via BUILTIN_LLM_KEY env var)
+BUILTIN_LLM_KEY = os.environ.get("BUILTIN_LLM_KEY", "")
 
 
 # ── Request Models ────────────────────────────────────────
