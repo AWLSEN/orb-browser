@@ -90,20 +90,6 @@ async def health():
     return {"status": "ok", "browserReady": page is not None, "error": init_error}
 
 
-@app.get("/debug/env")
-async def debug_env():
-    """Show LLM-related env vars for debugging proxy setup."""
-    keys = ["ANTHROPIC_BASE_URL", "OPENAI_BASE_URL", "LLM_API_KEY", "LLM_PROVIDER",
-            "LLM_BASE_URL", "API_BASE_URL", "ORB_PROXY_PORT", "PORT"]
-    result = {}
-    for k in keys:
-        v = os.environ.get(k, "")
-        if "KEY" in k and v:
-            result[k] = v[:8] + "..."
-        else:
-            result[k] = v or "(unset)"
-    return result
-
 
 # ── Navigation ────────────────────────────────────────────
 
@@ -386,73 +372,6 @@ async def _run_task_loop(task_id: str, req: TaskRequest):
                 pass
 
 
-class TestRequest(BaseModel):
-    llm_key: str
-    base_url: str = "https://openrouter.ai/api/v1"
-    model: str = "anthropic/claude-3.5-haiku"
-
-
-@app.post("/task/test")
-async def test_task(req: TestRequest):
-    """Diagnostic: test each step of the task pipeline individually."""
-    results = {}
-    import time
-
-    # Test 1: Create page
-    t0 = time.time()
-    try:
-        tp = await context.new_page()
-        results["new_page"] = f"OK ({time.time()-t0:.2f}s)"
-    except Exception as e:
-        results["new_page"] = f"FAIL: {e}"
-        return results
-
-    # Test 2: Screenshot
-    t0 = time.time()
-    try:
-        ss = await tp.screenshot(type="jpeg", quality=30)
-        results["screenshot"] = f"OK {len(ss)} bytes ({time.time()-t0:.2f}s)"
-    except Exception as e:
-        results["screenshot"] = f"FAIL: {e}"
-
-    # Test 3: Base64
-    t0 = time.time()
-    b64 = base64.b64encode(ss).decode()
-    results["base64"] = f"OK {len(b64)} chars ({time.time()-t0:.2f}s)"
-
-    # Test 4: LLM text call
-    base = req.base_url or os.environ.get("LLM_BASE_URL", "https://openrouter.ai/api/v1")
-    results["llm_base_url"] = base
-    t0 = time.time()
-    try:
-        answer = await asyncio.wait_for(
-            _call_llm(base, req.llm_key, req.model,
-                      [{"role": "user", "content": "Say hello in one word"}]),
-            timeout=60,
-        )
-        results["llm_text"] = f"OK: {answer[:50]} ({time.time()-t0:.2f}s)"
-    except Exception as e:
-        results["llm_text"] = f"FAIL: {e}"
-
-    # Test 5: LLM vision call
-    t0 = time.time()
-    try:
-        answer = await asyncio.wait_for(
-            _call_llm(base, req.llm_key, req.model,
-                      [{"role": "user", "content": [
-                          {"type": "text", "text": "What color is this page? One word."},
-                          {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}},
-                      ]}]),
-            timeout=60,
-        )
-        results["llm_vision"] = f"OK: {answer[:50]} ({time.time()-t0:.2f}s)"
-    except Exception as e:
-        results["llm_vision"] = f"FAIL: {e}"
-
-    await tp.close()
-    results["cleanup"] = "OK"
-    return results
-
 
 @app.post("/task")
 async def run_task(req: TaskRequest):
@@ -484,13 +403,6 @@ async def run_task(req: TaskRequest):
         return JSONResponse({"error": t["error"], "traceback": t.get("traceback", ""), "steps": t["steps"]}, 500)
     return {"task": req.task, "result": t["result"], "model": t["model"], "steps": t["steps"]}
 
-
-@app.get("/task/{task_id}")
-async def get_task(task_id: str):
-    """Poll task status."""
-    if task_id not in tasks:
-        return JSONResponse({"error": "task not found"}, 404)
-    return tasks[task_id]
 
 
 # ── Ask (simple: navigate + read text + LLM summarize) ────
