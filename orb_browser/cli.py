@@ -20,7 +20,11 @@ Usage:
     orb-browser live               Open live view in your browser
     orb-browser status             Show browser status
     orb-browser destroy            Delete the browser VM
-    orb-browser task <prompt>      Run a task (natural language → browser-use)
+    orb-browser back               Go back
+    orb-browser forward            Go forward
+    orb-browser fill <sel> <val>   Fill input by CSS selector
+    orb-browser task <prompt>      Run a vision task (screenshot → LLM → action)
+    orb-browser ask <url> <q>      Navigate to URL, ask LLM a question about it
     orb-browser setup              Set up API keys and provider
     orb-browser auth <key>         Save Orb API key
     orb-browser signup <email>     Create account and save key
@@ -268,6 +272,38 @@ def main():
         amount = int(args[2]) if len(args) > 2 else 500
         result = orb.scroll(direction, amount)
         print(json.dumps(result))
+        return
+
+    if cmd == "back":
+        orb = get_orb()
+        print(json.dumps(orb.back()))
+        return
+
+    if cmd == "forward":
+        orb = get_orb()
+        print(json.dumps(orb.forward()))
+        return
+
+    if cmd == "fill":
+        if len(args) < 3:
+            print("Usage: orb-browser fill <selector> <value>")
+            return
+        orb = get_orb()
+        result = orb.fill(args[1], " ".join(args[2:]))
+        print(json.dumps(result))
+        return
+
+    if cmd == "ask":
+        if len(args) < 3:
+            print('Usage: orb-browser ask <url> "<question>"')
+            return
+        orb = get_orb()
+        config = load_config()
+        url = args[1]
+        question = " ".join(args[2:])
+        llm_key = config.get("llm_key", "")
+        answer = orb.ask(url, question, llm_key=llm_key)
+        print(answer)
         return
 
     if cmd == "eval":

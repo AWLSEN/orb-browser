@@ -222,6 +222,27 @@ class OrbBrowser:
         """Set cookies."""
         return self._vm("POST", "/cookies", {"cookies": cookies})
 
+    def back(self) -> dict:
+        """Go back."""
+        return self._vm("POST", "/back")
+
+    def forward(self) -> dict:
+        """Go forward."""
+        return self._vm("POST", "/forward")
+
+    def ask(self, url: str, question: str, llm_key: str | None = None,
+            model: str | None = None, base_url: str | None = None) -> str:
+        """Navigate to URL, read text, ask LLM a question about it."""
+        body = {"url": url, "question": question}
+        if llm_key:
+            body["llm_key"] = llm_key
+        if model:
+            body["model"] = model
+        if base_url:
+            body["base_url"] = base_url
+        result = self._vm("POST", "/ask", body)
+        return result.get("answer", result)
+
     def health(self) -> dict:
         """Health check."""
         return self._vm("GET", "/health")
