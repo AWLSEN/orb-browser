@@ -270,23 +270,25 @@ async def _call_llm(base_url: str, api_key: str, model: str, messages: list[dict
     body = {"model": model, "messages": messages, "max_tokens": 256}
 
     last_err = None
-    for attempt in range(3):
+    for attempt in range(5):
         try:
-            async with httpx.AsyncClient(timeout=300) as client:
+            _log(f"[llm] Attempt {attempt+1}: POST {url}")
+            async with httpx.AsyncClient(timeout=60) as client:
                 resp = await client.post(url, headers=headers, json=body)
             if resp.status_code >= 400:
                 raise RuntimeError(f"LLM API {resp.status_code}: {resp.text[:500]}")
             data = resp.json()
             if "error" in data:
                 raise RuntimeError(f"LLM API error: {data['error']}")
+            _log(f"[llm] Attempt {attempt+1}: success")
             return data["choices"][0]["message"]["content"]
         except (httpx.ConnectError, httpx.ReadError, httpx.WriteError,
                 httpx.ReadTimeout, httpx.WriteTimeout, httpx.ConnectTimeout,
                 httpx.PoolTimeout, ConnectionError, OSError) as e:
             last_err = e
-            _log(f"[llm] Attempt {attempt+1} error (checkpoint/restore?): {type(e).__name__}: {e}")
-            await asyncio.sleep(2)
-    raise RuntimeError(f"LLM call failed after 3 attempts: {type(last_err).__name__}: {last_err}")
+            _log(f"[llm] Attempt {attempt+1}: {type(e).__name__}: {e}")
+            await asyncio.sleep(1)
+    raise RuntimeError(f"LLM call failed after 5 attempts: {type(last_err).__name__}: {last_err}")
 
 
 def _log(msg: str):
@@ -342,16 +344,7 @@ async def _run_task_loop(task_id: str, req: TaskRequest):
             })
 
             _log(f"[task {task_id}] Step {step+1}: calling LLM...")
-            try:
-                action = await asyncio.wait_for(
-                    _call_llm(base_url_val, api_key, model, messages),
-                    timeout=300,
-                )
-            except asyncio.TimeoutError:
-                _log(f"[task {task_id}] Step {step+1}: LLM timed out")
-                task_state["status"] = "error"
-                task_state["error"] = f"LLM call timed out at step {step+1}"
-                return
+            action = await _call_llm(base_url_val, api_key, model, messages)
 
             action = action.strip()
             _log(f"[task {task_id}] Step {step+1}: LLM responded: {action[:80]}")
