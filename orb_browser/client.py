@@ -25,9 +25,6 @@ import time
 import urllib.request
 import urllib.error
 
-BUILTIN_LLM_KEY = "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"
-
-
 def _make_orb_toml(provider="custom", llm_key="", llm_provider="openai"):
     """Generate orb.toml with the right LLM provider for Orb optimization."""
     return f"""[agent]
@@ -50,7 +47,6 @@ working_dir = "/agent/code"
 PLAYWRIGHT_BROWSERS_PATH = "/opt/browsers"
 LLM_API_KEY = "{llm_key}"
 LLM_PROVIDER = "{llm_provider}"
-BUILTIN_LLM_KEY = "{BUILTIN_LLM_KEY}"
 
 [lifecycle]
 idle_timeout = "300s"

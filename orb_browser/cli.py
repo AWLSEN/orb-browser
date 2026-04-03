@@ -94,7 +94,7 @@ def main():
         orb_key = input(f"Orb API key [{config.get('api_key', '')}]: ").strip()
         if orb_key:
             config["api_key"] = orb_key
-        llm_key = input(f"LLM API key (Enter to use built-in) [{config.get('llm_key', 'built-in')}]: ").strip()
+        llm_key = input(f"LLM API key (OpenRouter) [{config.get('llm_key', '')}]: ").strip()
         if llm_key:
             config["llm_key"] = llm_key
         provider = input(f"LLM provider (openai/anthropic) [{config.get('provider', 'openai')}]: ").strip()
@@ -117,8 +117,11 @@ def main():
         prompt = " ".join(args[1:])
         orb = get_orb()
         config = load_config()
-        llm_key = config.get("llm_key", "")  # empty = agent uses built-in key
+        llm_key = config.get("llm_key", "")
         provider = config.get("provider", "openai")
+        if not llm_key:
+            print("No LLM key configured. Run: orb-browser setup")
+            return
         import urllib.request
         import urllib.error
         task_body = {"task": prompt, "llm_key": llm_key, "provider": provider}

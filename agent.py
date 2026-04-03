@@ -20,7 +20,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, Response
 from pydantic import BaseModel
 from typing import Optional
 
-app = FastAPI(title="orb-browser", version="0.4.0")
+app = FastAPI(title="orb-browser", version="0.5.0")
 
 
 @app.middleware("http")
@@ -39,8 +39,6 @@ page = None
 init_error = None
 tasks: dict[str, dict] = {}  # task_id -> {status, result, error, steps}
 
-# Built-in LLM key for zero-friction onboarding (set via BUILTIN_LLM_KEY env var)
-BUILTIN_LLM_KEY = os.environ.get("BUILTIN_LLM_KEY", "")
 
 
 # ── Request Models ────────────────────────────────────────
@@ -300,7 +298,7 @@ def _log(msg: str):
 async def _run_task_loop(task_id: str, req: TaskRequest):
     """Background coroutine that runs the vision agent loop."""
     task_state = tasks[task_id]
-    api_key = req.llm_key or os.environ.get("LLM_API_KEY", "") or BUILTIN_LLM_KEY
+    api_key = req.llm_key or os.environ.get("LLM_API_KEY", "")
     base_url_val = req.base_url or os.environ.get("LLM_BASE_URL", "") or "https://openrouter.ai/api/v1"
     model = req.model or "google/gemini-2.0-flash-001"
     _log(f"[task {task_id}] LLM base_url={base_url_val} model={model}")
@@ -393,7 +391,9 @@ async def run_task(req: TaskRequest):
     if not browser:
         return JSONResponse({"error": "browser not ready"}, 503)
 
-    api_key = req.llm_key or os.environ.get("LLM_API_KEY", "") or BUILTIN_LLM_KEY
+    api_key = req.llm_key or os.environ.get("LLM_API_KEY", "")
+    if not api_key:
+        return JSONResponse({"error": "No LLM key. Pass llm_key or set LLM_API_KEY env var."}, 400)
 
     task_id = uuid.uuid4().hex[:8]
     tasks[task_id] = {
@@ -432,7 +432,9 @@ async def ask(req: AskRequest):
     if not page:
         return JSONResponse({"error": "browser not ready"}, 503)
 
-    api_key = req.llm_key or os.environ.get("LLM_API_KEY", "") or BUILTIN_LLM_KEY
+    api_key = req.llm_key or os.environ.get("LLM_API_KEY", "")
+    if not api_key:
+        return JSONResponse({"error": "No LLM key. Pass llm_key or set LLM_API_KEY env var."}, 400)
     base_url = req.base_url or os.environ.get("LLM_BASE_URL", "") or "https://openrouter.ai/api/v1"
     model = req.model or "google/gemini-2.0-flash-001"
 
