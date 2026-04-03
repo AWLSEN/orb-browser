@@ -1,33 +1,52 @@
 """
-orb-browser CLI — give any agent a browser.
+orb-browser — a cloud browser with vision. Deploy, browse, ask questions, run tasks.
 
-Usage:
-    orb-browser deploy              Deploy a browser on Orb Cloud
+Quick start:
+    orb-browser deploy                          Deploy browser VM on Orb Cloud
+    orb-browser task "describe images on nytimes.com"   Vision agent (screenshot + LLM)
+    orb-browser sleep                           Freeze to disk ($0/hr)
+    orb-browser wake                            Restore in 500ms
+
+AI agent commands (use these for natural language tasks):
+    orb-browser task "<prompt>"                 Vision agent: screenshots page, sends to LLM,
+                                                clicks/types/scrolls until done. Best for visual tasks.
+    orb-browser task --url <url> "<prompt>"     Same, but navigate to URL first.
+    orb-browser ask <url> "<question>"          Read page text and ask LLM (no vision, faster).
+
+Browser control:
     orb-browser go <url>            Navigate to URL
-    orb-browser screenshot [path]   Take screenshot (prints path or base64)
-    orb-browser text                Get page text
-    orb-browser html                Get page HTML
-    orb-browser url                 Get current URL and title
+    orb-browser back / forward      Go back/forward
     orb-browser click <x> <y>      Click at coordinates
     orb-browser click <selector>   Click element by CSS selector
+    orb-browser fill <sel> <val>   Fill input by CSS selector
     orb-browser type <text>        Type text
     orb-browser press <key>        Press key (Enter, Tab, Escape, etc)
     orb-browser scroll [down|up]   Scroll the page
     orb-browser eval <js>          Run JavaScript
-    orb-browser cookies            Get cookies as JSON
-    orb-browser sleep              Checkpoint browser ($0)
-    orb-browser wake               Restore browser (~500ms)
-    orb-browser live               Open live view in your browser
-    orb-browser status             Show browser status
-    orb-browser destroy            Delete the browser VM
-    orb-browser back               Go back
-    orb-browser forward            Go forward
-    orb-browser fill <sel> <val>   Fill input by CSS selector
-    orb-browser task <prompt>      Run a vision task (screenshot → LLM → action)
-    orb-browser ask <url> <q>      Navigate to URL, ask LLM a question about it
-    orb-browser setup              Set up API keys and provider
-    orb-browser auth <key>         Save Orb API key
-    orb-browser signup <email>     Create account and save key
+
+Content:
+    orb-browser screenshot [path]   Take JPEG screenshot
+    orb-browser text                Get page text
+    orb-browser html                Get page HTML
+    orb-browser url                 Get current URL and title
+    orb-browser cookies             Get cookies as JSON
+
+Lifecycle:
+    orb-browser deploy              Deploy browser on Orb Cloud (~1-2 min)
+    orb-browser sleep               Checkpoint to disk ($0 while sleeping)
+    orb-browser wake                Restore (~500ms, still logged in)
+    orb-browser live                Open interactive browser view
+    orb-browser status              Show browser status
+    orb-browser destroy             Delete the browser VM
+
+Setup:
+    orb-browser setup               Configure API keys
+    orb-browser auth <key>          Save Orb API key
+    orb-browser signup <email>      Create account
+
+Environment variables:
+    ORB_API_KEY                     Orb Cloud API key
+    LLM_API_KEY / OPENROUTER_API_KEY   LLM key (OpenRouter, etc)
 """
 
 import json
@@ -112,9 +131,16 @@ def main():
     # ── Task ──────────────────────────────────────────
     if cmd == "task":
         if len(args) < 2:
-            print("Usage: orb-browser task \"<prompt>\"")
+            print('Usage: orb-browser task "<prompt>"')
+            print('       orb-browser task --url <url> "<prompt>"')
             return
-        prompt = " ".join(args[1:])
+        # Parse --url flag
+        start_url = None
+        task_args = args[1:]
+        if task_args[0] == "--url" and len(task_args) >= 3:
+            start_url = task_args[1]
+            task_args = task_args[2:]
+        prompt = " ".join(task_args)
         orb = get_orb()
         config = load_config()
         llm_key = config.get("llm_key", "") or os.environ.get("LLM_API_KEY", "") or os.environ.get("OPENROUTER_API_KEY", "")
@@ -125,6 +151,8 @@ def main():
         import urllib.request
         import urllib.error
         task_body = {"task": prompt, "llm_key": llm_key, "provider": provider}
+        if start_url:
+            task_body["start_url"] = start_url
         if config.get("base_url"):
             task_body["base_url"] = config["base_url"]
         req = urllib.request.Request(
