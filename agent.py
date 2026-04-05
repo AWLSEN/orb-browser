@@ -454,6 +454,53 @@ async def ask(req: AskRequest):
         return JSONResponse({"error": str(e)}, 500)
 
 
+# ── Claude Code Agent ─────────────────────────────────────
+
+class ClaudeRequest(BaseModel):
+    prompt: str
+    user_email: Optional[str] = None
+    agentmail_key: Optional[str] = None
+    timeout: int = 300
+
+
+@app.post("/claude")
+async def run_claude(req: ClaudeRequest):
+    """Spawn Claude Code CLI with a prompt. Returns output."""
+    import subprocess as sp
+
+    env = {**os.environ}
+    if req.user_email:
+        env["USER_EMAIL"] = req.user_email
+    if req.agentmail_key:
+        env["AGENTMAIL_API_KEY"] = req.agentmail_key
+
+    _log(f"[claude] Running: {req.prompt[:80]}")
+
+    loop = asyncio.get_running_loop()
+
+    def _run():
+        try:
+            result = sp.run(
+                ["claude", "-p", req.prompt, "--output-format", "text"],
+                capture_output=True, text=True,
+                timeout=req.timeout,
+                env=env,
+                cwd="/agent/code",
+            )
+            return {"output": result.stdout, "error": result.stderr, "returncode": result.returncode}
+        except sp.TimeoutExpired:
+            return {"output": "", "error": "Timed out", "returncode": -1}
+        except FileNotFoundError:
+            return {"output": "", "error": "Claude Code CLI not installed. Run: npm install -g @anthropic-ai/claude-code", "returncode": -1}
+
+    result = await loop.run_in_executor(None, _run)
+    _log(f"[claude] Done. Return code: {result['returncode']}")
+
+    if result["returncode"] != 0 and not result["output"]:
+        return JSONResponse({"error": result["error"]}, 500)
+    return result
+
+
 # ── Live Browser View ─────────────────────────────────────
 # Opens in your browser. See the remote Chrome screen.
 # Click anywhere to click. Type to type. Log in manually.

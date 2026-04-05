@@ -9,8 +9,9 @@ branch = "main"
 
 [build]
 steps = [
-  "pip install playwright fastapi uvicorn httpx",
+  "pip install playwright fastapi uvicorn httpx agentmail",
   "PLAYWRIGHT_BROWSERS_PATH=/opt/browsers playwright install chromium",
+  "npm install -g @anthropic-ai/claude-code",
 ]
 working_dir = "/agent/code"
 
