@@ -40,14 +40,13 @@ orb-browser screenshot /tmp/page.jpg  # take screenshot, then view it
 
 ## Live View
 
-After deploying or waking the browser, **always share the live view link with the user** so they can watch you browse in real-time:
+**IMPORTANT: After deploying or waking the browser, ALWAYS open the live view immediately.** Don't ask — just do it:
 
 ```bash
 orb-browser live
-# This prints and opens: https://<vm-id>.orbcloud.dev/live
 ```
 
-Tell the user: "You can watch the browser live here: [link]". They'll see everything you do — clicks, scrolls, navigation — in real-time. This builds trust and is fun to watch.
+This opens the live browser in the user's default browser automatically. They see everything — clicks, scrolls, navigation — in real-time. Always do this before any browsing commands.
 
 ## Email via AgentMail
 
