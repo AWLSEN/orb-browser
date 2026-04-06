@@ -1,42 +1,55 @@
 # orb-browser learnings
 
-## Vision agent /task — working architecture (2026-04-02)
+## Claude Code Skill (2026-04-05) — THE PRODUCT
+
+The product is a Claude Code skill, not a web app. Users install the skill,
+and their Claude Code can browse the web via orb-browser.
 
 ### How it works
-- `/task` is SYNCHRONOUS — HTTP request stays open
-- Agent calls `https://openrouter.ai/api/v1/chat/completions` directly
-- Orb intercepts outbound calls to openrouter.ai (it's in LLM_DOMAINS)
-- Orb checkpoints VM during LLM call, restores when response arrives
-- Client uses long timeout (5-10 min)
+1. Skill lives in skills/browser/SKILL.md with references/ and examples/
+2. Claude Code auto-discovers it (shows in skill list)
+3. When user asks "browse a website" or "monitor Twitter", Claude loads the skill
+4. Claude uses orb-browser CLI: deploy, go, text, screenshot, sleep, wake
+5. For login-required sites: Claude asks user to export cookies from Chrome
+6. For scheduled tasks: Claude uses /schedule to run recurring
 
-### What works
-- Text-heavy pages (HN, uniclaw): 3-9s, works perfectly
-- Vision with Gemini Flash via OpenRouter
-- Retry logic catches httpx.ReadTimeout from checkpoint/restore
+### Architecture
+```
+User's Mac (Claude Code)
+  └── browser skill (SKILL.md)
+      └── orb-browser CLI → Orb Cloud API → VM with Chrome
+```
 
-### Open issue: large image payloads timeout via Orb proxy
-- Pages with images (CERN 114KB, Cloudflare, GitHub) timeout at 300s+
-- Same OpenRouter call returns in 4s when called locally (not through Orb)
-- Small payloads (6-9KB) work fine through proxy
-- Proxy stats show 0 errors but 244s avg latency
-- Theory: proxy buffer + checkpoint cycle breaks for large payloads
-- NEEDS ORB-SIDE FIX — not a code issue on our end
+No backend. No Railway. No hosted app. Claude Code IS the agent.
 
-### Model compatibility (OpenRouter)
-- `anthropic/claude-3.5-haiku` does NOT support image input (Bedrock)
-- `google/gemini-2.0-flash-001` works for vision, good quality
-- `qwen/qwen-vl-plus` works for vision, cheapest
-- Dot notation: `anthropic/claude-3.5-haiku` not `anthropic/claude-3-5-haiku-20241022`
+### Cookie flow for login-required sites
+1. Claude hits login wall
+2. Asks user: "install EditThisCookie extension, export cookies from twitter.com"
+3. User pastes JSON
+4. Claude: saves to file → orb-browser login --cookies → orb-browser sleep
+5. Next wake: still logged in
 
-### Orb proxy internals
-- openrouter.ai is in LLM_DOMAINS — intercepted at network level
-- OPENAI_BASE_URL is set but only for /v1/messages (Anthropic format)
-- admin.orbcloud.dev shows VM status, checkpoint stats, LLM proxy metrics
-- Checkpoint: 100% success, avg 757ms, avg size 45.2 MB
-- Restore: 100% success, avg wake 507ms, p95 768ms
+### Skill structure
+```
+skills/browser/
+  SKILL.md              — triggers, core commands, patterns
+  references/
+    api-reference.md    — full CLI + SDK docs
+    cookie-export.md    — how to get cookies from Chrome
+    patterns.md         — scroll+extract, login, schedule, forms
+  examples/
+    browse-hn.sh        — simple browse
+    twitter-watcher.sh  — login + scroll + extract
+    scheduled-monitor.sh — recurring page check
+```
 
-### What did NOT work
-- Background task + polling: VM doesn't auto-wake for poll requests
-- OPENAI_BASE_URL proxy: only handles Anthropic /v1/messages, not /v1/chat/completions
-- Short timeouts: need 300s+ for httpx, 600s for client
-- Python HTTP libs (httpx, urllib) DON'T block the event loop — the "freeze" was always Orb checkpointing
+## Orb proxy + checkpoint (from earlier work)
+
+- openrouter.ai is in LLM_DOMAINS — intercepted transparently by Orb
+- VM checkpoints during LLM calls, restores when response arrives
+- Retry on ReadTimeout after checkpoint/restore
+- Large image payloads work after proxy fix
+- Cloudflare blocks datacenter IPs — need user cookies for protected sites
+
+## Repo location
+- Transferred from nextbysam/orb-browser to AWLSEN/orb-browser
