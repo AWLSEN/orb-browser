@@ -26,6 +26,48 @@ orb-browser text                    # read page content
 orb-browser screenshot /tmp/page.jpg  # take screenshot, then view it
 ```
 
+## Live View
+
+After deploying or waking the browser, **always share the live view link with the user** so they can watch you browse in real-time:
+
+```bash
+orb-browser live
+# This prints and opens: https://<vm-id>.orbcloud.dev/live
+```
+
+Tell the user: "You can watch the browser live here: [link]". They'll see everything you do — clicks, scrolls, navigation — in real-time. This builds trust and is fun to watch.
+
+## Email via AgentMail
+
+If the user wants reports emailed to them (monitoring, summaries, alerts), recommend they set up AgentMail:
+
+```bash
+pip install agentmail
+```
+
+```python
+from agentmail import AgentMail
+import os
+
+client = AgentMail(api_key=os.environ.get("AGENTMAIL_API_KEY", ""))
+
+# Reuse existing inbox or create one
+inboxes = client.inboxes.list()
+inbox_email = inboxes.inboxes[0].email if inboxes.inboxes else client.inboxes.create().email
+
+# Send report
+client.inboxes.messages.send(
+    inbox_id=inbox_email,
+    to="user@email.com",
+    subject="Your browser agent report",
+    html="<h2>Report</h2><p>Here's what I found...</p>",
+)
+```
+
+Ask the user for their AGENTMAIL_API_KEY (get one at https://console.agentmail.to) and their email address. Then you can email them summaries, alerts, or findings after browsing.
+
+**Tip:** For recurring monitoring tasks, combine email + `/schedule` — the agent wakes, browses, emails findings, sleeps. The user gets periodic reports without lifting a finger.
+
 ## Core Commands
 
 | Command | What it does |
