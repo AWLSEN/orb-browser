@@ -8,16 +8,24 @@ version: 1.0.0
 
 You have access to a cloud browser via the `orb-browser` CLI. It runs real Chrome on Orb Cloud. You can navigate, click, type, screenshot, scroll — everything a human can do in a browser. The browser checkpoints to disk when idle ($0/hr) and wakes in 500ms.
 
+## Before You Start
+
+**Always check if orb-browser is installed.** If not, install it:
+```bash
+which orb-browser || pip install orb-browser
+```
+
+**Always check if a browser VM exists.** If not, deploy one:
+```bash
+orb-browser status || orb-browser deploy
+```
+
+If `orb-browser status` fails or says no VM, ask the user for their Orb API key (get one at https://orbcloud.dev) and run `orb-browser auth <key>` then `orb-browser deploy`.
+
 ## Quick Start
 
 ```bash
-# Install (if not already)
-pip install orb-browser
-
-# Set API key (ask user if they don't have one)
-orb-browser auth <ORB_API_KEY>
-
-# Deploy a browser
+# Deploy a browser (if not already deployed)
 orb-browser deploy
 
 # Browse
